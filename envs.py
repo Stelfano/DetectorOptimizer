@@ -7,7 +7,8 @@ MAX_PLANES = 20
 
 
 class SimpleRoTDetector(gym.Env):
-    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0):
+    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, debug = False):
+        self.debug = debug 
         super().__init__()
         self.n_tracks = n_tracks
         self.spatial_res = spatial_res
@@ -59,8 +60,8 @@ class SimpleRoTDetector(gym.Env):
         if len(self.detector_state) < 2:
             cost = 0.0
         else:
-            cost = len(self.detector_state) * 2.0 + self.detector_state.max() * 0.1
-        reward = 50.0 - beta_dist / 10.0 - theta_dist / 10.0 - cost
+            cost = self.detector_state[-1] * 0.01
+        reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
         reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
         reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
         return reward, cost
@@ -71,7 +72,7 @@ class SimpleRoTDetector(gym.Env):
         stop_signal = float(action[1])
         reward = 0.0
 
-        should_stop = stop_signal > 0.0 and len(self.detector_state) > 0
+        should_stop = stop_signal > 0.5 and len(self.detector_state) > 1
         terminated = False
         truncated = False
 
@@ -87,7 +88,8 @@ class SimpleRoTDetector(gym.Env):
         obs, theta_dist, beta_dist, x_hits, y_hits = self._obs_and_metrics()
         if terminated or truncated:
             reward, cost = self.calculate_reward(theta_dist, beta_dist)
-            print(f"Terminated: {terminated}, Truncated: {truncated}, Detector state: {self.detector_state}, and stop_signal: {stop_signal}, and reward: {reward}, cost: {cost}") 
+            if self.debug:
+                print(f"Terminated: {terminated}, Truncated: {truncated}, Detector state: {self.detector_state}, and stop_signal: {stop_signal}, and reward: {reward}, cost: {cost}") 
         return obs, float(reward)/10, terminated, truncated, {}
 
     
@@ -98,4 +100,34 @@ class SimpleRoTDetector(gym.Env):
             return
         draw_detector(n_planes=len(self.detector_state), z_planes=self.detector_state, plane_size=100.0, tof_margin=50, x_hits=x_hits, y_hits=y_hits, n_tracks_show=self.n_tracks, label=f"Detector 3D - Reward: {reward:.2f}, Planes: {len(self.detector_state)}\ndist theta: {obs[1]:.2f}, dist beta: {obs[2]:.2f}\ncost: {cost:.2f}")
 
+
+class SimplePotentialDetector(SimpleRoTDetector):
+    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0):
+        super().__init__(n_tracks=n_tracks, spatial_res=spatial_res, time_res=time_res, tof_margin=tof_margin)
+        
+    def step(self, action):
+        plane_position = self.placement_range[0] + (float(action[0]) + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
+        plane_position = float(np.clip(plane_position, self.placement_range[0], self.placement_range[1]))
+        stop_signal = float(action[1])
+        reward = 0.0
+        
+        should_stop = stop_signal > 0.5 and len(self.detector_state) > 1
+        terminated = False
+        truncated = False
+       
+        if(self.detector_state.size == self.max_planes):
+            truncated = True
+        
+        if should_stop:
+            terminated = True
+        else:
+            if plane_position not in self.detector_state and not truncated:
+                self.detector_state = np.sort(np.append(self.detector_state, plane_position))
+        
+        obs, theta_dist, beta_dist, x_hits, y_hits = self._obs_and_metrics()
+        if(len(self.detector_state) > 1):
+            reward, cost = self.calculate_reward(theta_dist, beta_dist)
+            if self.debug:
+                print(f"Terminated: {terminated}, Truncated: {truncated}, Detector state: {self.detector_state}, and stop_signal: {stop_signal}, and reward: {reward}, cost: {cost}") 
+        return obs, float(reward)/10, terminated, truncated, {}
         
