@@ -1,6 +1,8 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import logging
+import os
 
 
 def simulate_tracks(
@@ -229,15 +231,15 @@ class reward_calculator:
             
 
     def length_reward_incentive(self, detector_state, beta_dist, theta_dist):
-            if len(detector_state) < 2:
-                cost = 0.0
-            else:
-                cost = detector_state[-1] * 0.01
-                reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
-                reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
-                reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
+        if len(detector_state) < 2:
+            cost = 0.0
+        else:
+            cost = detector_state[-1] * 0.01
+        reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
+        reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
+        reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
 
-            return reward, cost
+        return reward, cost
 
     def length_plane_reward(self, detector_state, beta_dist, theta_dist):
         if len(detector_state) < 2:
@@ -248,3 +250,105 @@ class reward_calculator:
         reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
         reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
         return reward, cost
+
+
+from torch.utils.tensorboard import SummaryWriter
+from skrl.trainers.torch import StepTrainer
+import numpy as np
+
+#Write description on tensorboard data, Qvalue, timesteps and so on, comment and explanations
+#Write different versions of the whole system, such as Reward on Termination, and potential reward shaping, and so on
+class customTrainer(StepTrainer):
+    def __init__(self, env, agent, cfg, logdir='runs', health_logs=False, health_dir='health-logs/', health_filename='unnamed-logs', log_interval=10):
+        super().__init__(env=env, agents=agent, cfg=cfg)
+        self.writer = SummaryWriter(log_dir="./runs")
+        self.env = env
+        self.logger = None
+        self.agent = agent
+        self.cfg = cfg
+
+        logging.basicConfig(
+            filename=health_dir+cfg.experiment.experiment_name,
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            filemode="w"
+        )
+        if health_logs:
+            self.logger = logging.getLogger("NetworkHealth")
+            self.log_interval = log_interval
+            self.health_logs = health_logs
+        else:
+            self._real_log_health = lambda *args, **kwargs : None
+
+    def train(self):
+        self.best_reward = -np.inf
+
+        for timestep in range(self.cfg.timesteps):
+            super().train()
+            
+            obs = self.env._obs_and_metrics()
+            reward, cost = self.env.calculate_reward(obs[1], obs[2])
+            
+            #print best detector state and reward if reward is better than previous best
+            if reward > self.best_reward:
+                log_msg = (
+                        f"[BEST REWARD] Timestep: {timestep} | "
+                        f"Best Reward: {self.best_reward:.4f} | "
+                        f"Detector State: {self.env.detector_state}"
+                    )
+                self.logger.info(log_msg)
+                self.best_reward = reward
+                if(self.env.detector_state is not None and len(self.env.detector_state) > 1):
+                    self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.env.detector_state), z_planes=self.env.detector_state, plane_size=100.0, tof_margin=50, x_hits=obs[3], y_hits=obs[4], n_tracks_show=self.env.n_tracks, label=f"Detector 3D - Reward: {reward:.2f}, Planes: {len(self.env.detector_state)}\ndist theta: {obs[1]:.2f}, dist beta: {obs[2]:.2f}\ncost: {cost:.2f}"), global_step=timestep)
+
+            if timestep % self.log_interval == 0:
+                self._real_log_health(timestep=timestep, reward=reward, cost=cost)
+
+
+    def _real_log_health(self, timestep, reward, cost):
+        health_data = self._get_network_health()
+        
+        health_log = (
+            f"Timestep: {timestep} | "
+            f"Reward: {reward:.4f} | "
+            f"Cost: {cost:.4f} | "
+            f"Actor Grad Norm: {health_data['actor_grad_norm']:.4f} | "
+            f"Critic Grad Norm: {health_data['critic_grad_norm']:.4f} | "
+            f"Actor Loss: {health_data['actor_loss']} | "
+            f"Critic Loss: {health_data['critic_loss']}"
+        )
+
+        self.logger.info(health_log)
+        
+        self.writer.add_scalar("Performance/Reward", reward, timestep)
+        self.writer.add_scalar("Performance/Cost", cost, timestep)
+        self.writer.add_scalar("Health/ActorGradNorm", health_data['actor_grad_norm'], timestep)
+        self.writer.add_scalar("Health/CriticGradNorm", health_data['critic_grad_norm'], timestep)
+
+    def _get_network_health(self):
+        actor_grad_norm = 0.0
+        critic_grad_norm = 0.0
+        
+        try:
+            if hasattr(self.agent, "policy") and self.agent.policy is not None:
+                actor_grads = [p.grad.norm().item() for p in self.agent.policy.parameters() if p.grad is not None]
+                if actor_grads:
+                    actor_grad_norm = float(np.mean(actor_grads))
+            
+            if hasattr(self.agent, "value") and self.agent.value is not None:
+                critic_grads = [p.grad.norm().item() for p in self.agent.value.parameters() if p.grad is not None]
+                if critic_grads:
+                    critic_grad_norm = float(np.mean(critic_grads))
+        except Exception as e:
+            self.logger.error(f"Errore durante il calcolo delle norme dei gradienti: {e}")
+
+        tracking_dict = getattr(self.agent, "tracking", {})
+        actor_loss = tracking_dict.get("loss / actor loss", 0.0)
+        critic_loss = tracking_dict.get("loss / critic loss", 0.0)
+
+        return {
+            "actor_grad_norm": actor_grad_norm,
+            "critic_grad_norm": critic_grad_norm,
+            "actor_loss": actor_loss,
+            "critic_loss": critic_loss
+        }
