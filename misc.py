@@ -216,3 +216,28 @@ def draw_detector(
     plt.show()
 
     return fig
+
+class reward_calculator:
+    def __init__(self):
+        pass
+
+    def length_reward_incentive(self, detector_state, beta_dist, theta_dist):
+            if len(detector_state) < 2:
+                cost = 0.0
+            else:
+                cost = detector_state[-1] * 0.01
+                reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
+                reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
+                reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
+
+            return reward, cost
+
+    def length_plane_reward(self, detector_state, beta_dist, theta_dist):
+        if len(detector_state) < 2:
+            cost = 0.0
+        else:
+            cost = detector_state[-1] * 0.01 + self.len(detector_state) * 0.2
+        reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
+        reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
+        reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
+        return reward, cost

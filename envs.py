@@ -1,4 +1,4 @@
-from misc import simulate_tracks, eval_sim, draw_detector
+from misc import simulate_tracks, eval_sim, draw_detector, reward_calculator
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -15,6 +15,8 @@ class SimpleRoTDetector(gym.Env):
         self.time_res = time_res
         self.tof_margin = tof_margin
         self.max_planes = MAX_PLANES
+        self.reward_calculator = reward_calculator()
+        
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
         obs_dim = self.max_planes + 2
@@ -57,14 +59,7 @@ class SimpleRoTDetector(gym.Env):
         return obs, {}
 
     def calculate_reward(self, theta_dist, beta_dist):
-        if len(self.detector_state) < 2:
-            cost = 0.0
-        else:
-            cost = self.detector_state[-1] * 0.01
-        reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
-        reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
-        reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
-        return reward, cost
+        return self.reward_calculator.length_reward_incentive(self.detector_state, beta_dist, theta_dist)
 
     def step(self, action):
         plane_position = self.placement_range[0] + (float(action[0]) + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
