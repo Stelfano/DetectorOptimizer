@@ -218,8 +218,15 @@ def draw_detector(
     return fig
 
 class reward_calculator:
-    def __init__(self):
-        pass
+    def __init__(self, mode='lenght'):
+        self.mode = mode
+
+    def forward(self, detector_state, beta_dist, theta_dist):
+        if(self.mode == 'length'):
+            return self.length_reward_incentive(detector_state, beta_dist, theta_dist)
+        if(self.mode == 'length_plane'):
+            return self.length_plane_reward(detector_state, beta_dist, theta_dist)
+            
 
     def length_reward_incentive(self, detector_state, beta_dist, theta_dist):
             if len(detector_state) < 2:

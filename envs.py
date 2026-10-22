@@ -7,7 +7,7 @@ MAX_PLANES = 20
 
 
 class SimpleRoTDetector(gym.Env):
-    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, debug = False):
+    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, debug = False, reward_mode = 'length'):
         self.debug = debug 
         super().__init__()
         self.n_tracks = n_tracks
@@ -15,7 +15,7 @@ class SimpleRoTDetector(gym.Env):
         self.time_res = time_res
         self.tof_margin = tof_margin
         self.max_planes = MAX_PLANES
-        self.reward_calculator = reward_calculator()
+        self.reward_calculator = reward_calculator(reward_mode)
         
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(2,), dtype=np.float32)
@@ -59,7 +59,7 @@ class SimpleRoTDetector(gym.Env):
         return obs, {}
 
     def calculate_reward(self, theta_dist, beta_dist):
-        return self.reward_calculator.length_reward_incentive(self.detector_state, beta_dist, theta_dist)
+        return self.reward_calculator.forward(self.detector_state, beta_dist, theta_dist)
 
     def step(self, action):
         plane_position = self.placement_range[0] + (float(action[0]) + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
