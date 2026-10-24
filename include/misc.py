@@ -220,16 +220,17 @@ def draw_detector(
     return fig
 
 class reward_calculator:
-    def __init__(self, mode='lenght'):
+    def __init__(self, mode='length'): # Fixed typo 'lenght' -> 'length'
         self.mode = mode
 
-    def forward(self, detector_state, beta_dist, theta_dist):
-        if(self.mode == 'length'):
+    def forward(self, detector_state, beta_dist, theta_dist, spatial_res=None, tof_margin=None, temporal_res=None):
+        if self.mode == 'length':
             return self.length_reward_incentive(detector_state, beta_dist, theta_dist)
-        if(self.mode == 'length_plane'):
+        elif self.mode == 'length_plane':
             return self.length_plane_reward(detector_state, beta_dist, theta_dist)
+        elif self.mode == 'length_params':
+            return self.length_and_params_reward(detector_state, beta_dist, theta_dist, spatial_res, tof_margin, temporal_res)
             
-
     def length_reward_incentive(self, detector_state, beta_dist, theta_dist):
         if len(detector_state) < 2:
             cost = 0.0
@@ -238,14 +239,23 @@ class reward_calculator:
         reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
         reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
         reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
-
         return reward, cost
 
     def length_plane_reward(self, detector_state, beta_dist, theta_dist):
         if len(detector_state) < 2:
             cost = 0.0
         else:
-            cost = detector_state[-1] * 0.01 + self.len(detector_state) * 0.2
+            cost = detector_state[-1] * 0.01 + len(detector_state) * 0.2  # Fixed: self.len -> len
+        reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
+        reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
+        reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
+        return reward, cost
+
+    def length_and_params_reward(self, detector_state, beta_dist, theta_dist, spatial_res, tof_margin, time_res):
+        if len(detector_state) < 2:
+            cost = 0.0
+        else:
+            cost = detector_state[-1] * 0.01 + len(detector_state) * 0.2 + spatial_res/0.01 + tof_margin * 0.01 + time_res / 0.1  
         reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
         reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
         reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
@@ -287,7 +297,7 @@ class customTrainer(StepTrainer):
             super().train()
             
             obs = self.env._obs_and_metrics()
-            reward, cost = self.env.calculate_reward(obs[1], obs[2])
+            reward, cost = self.env.calculate_reward(self.env.detector_state, obs[1], obs[2], self.env.spatial_res, self.env.tof_margin, self.env.time_res)
             
             #print best detector state and reward if reward is better than previous best
             if reward > self.best_reward:
@@ -299,7 +309,8 @@ class customTrainer(StepTrainer):
                 self.logger.info(log_msg)
                 self.best_reward = reward
                 if(self.env.detector_state is not None and len(self.env.detector_state) > 1):
-                    self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.env.detector_state), z_planes=self.env.detector_state, plane_size=100.0, tof_margin=50, x_hits=obs[3], y_hits=obs[4], n_tracks_show=self.env.n_tracks, label=f"Detector 3D - Reward: {reward:.2f}, Planes: {len(self.env.detector_state)}\ndist theta: {obs[1]:.2f}, dist beta: {obs[2]:.2f}\ncost: {cost:.2f}"), global_step=timestep)
+                    self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.env.detector_state), z_planes=self.env.detector_state, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[3], y_hits=obs[4], n_tracks_show=self.env.n_tracks, 
+                                            label=f"Detector 3D - Reward: {reward:.2f}, Planes: {len(self.env.detector_state)}\ndist theta: {obs[1]:.2f}, dist beta: {obs[2]:.2f}\ncost: {cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
 
             if timestep % self.log_interval == 0:
                 self._real_log_health(timestep=timestep, reward=reward, cost=cost)
