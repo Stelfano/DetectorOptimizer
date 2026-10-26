@@ -39,7 +39,6 @@ class SimpleRoTDetector(gym.Env):
             z_planes=self.detector_state.copy(), n_tracks=self.n_tracks,
             seed=self.global_seed,
         )
-        self.global_seed += 1
         ev = eval_sim(x, y, z, dt, hit_valid.astype(bool), n_planes)
         theta_dist = float(np.linalg.norm(ev["theta_measured"] - theta_deg))
         beta_dist = float(np.linalg.norm(ev["beta_measured"] - beta))
@@ -49,8 +48,6 @@ class SimpleRoTDetector(gym.Env):
         obs = np.concatenate([padded, [theta_dist, beta_dist]]).astype(np.float32)
 
         #normalize the observation vector to have a unit norm, which can help with training stability in reinforcement learning.
-        obs /= np.linalg.norm(obs) + 1e-8
-
         return obs, theta_dist, beta_dist, x, y
 
     def reset(self, seed=None, options=None):
@@ -66,7 +63,7 @@ class SimpleRoTDetector(gym.Env):
         plane_position = self.placement_range[0] + (float(action[0]) + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
         plane_position = float(np.clip(plane_position, self.placement_range[0], self.placement_range[1]))
         stop_signal = float(action[1])
-        reward = 0.0
+        self.reward = 0.0
 
         should_stop = stop_signal > 0.5 and len(self.detector_state) > 1
         terminated = False
@@ -83,11 +80,12 @@ class SimpleRoTDetector(gym.Env):
 
         obs, theta_dist, beta_dist, x_hits, y_hits = self._obs_and_metrics()
         if terminated or truncated:
+            self.global_seed += 1
             self.end_of_episode()
-            reward, cost = self.calculate_reward(self.detector_state, theta_dist, beta_dist)
+            self.reward, cost = self.calculate_reward(self.detector_state, theta_dist, beta_dist)
             if self.debug:
-                print(f"Terminated: {terminated}, Truncated: {truncated}, Detector state: {self.detector_state}, and stop_signal: {stop_signal}, and reward: {reward}, cost: {cost}") 
-        return obs, float(reward)/10, terminated, truncated, {}
+                print(f"Terminated: {terminated}, Truncated: {truncated}, Detector state: {self.detector_state}, and stop_signal: {stop_signal}, and reward: {self.reward}, cost: {cost}") 
+        return obs, float(self.reward)/10, terminated, truncated, {}
 
     def end_of_episode(self):
         return
@@ -146,7 +144,7 @@ class classicalOptimizingDetector(SimpleRoTDetector):
             _, theta, beta, _, _ = self._obs_and_metrics()
             return - self.reward_calculator.forward(self.detector_state, beta, theta, x[0], x[1], x[2])[0]
 
-        res = gp_minimize(f, [(0.01, 10), (1, 100), (0.01, 10)], n_calls=10)
+        res = gp_minimize(f, [(0.01, 10), (1, 100), (0.01, 10)], n_calls=20)
         
         self.spatial_res = res.x[0]
         self.tof_margin = res.x[1]

@@ -292,28 +292,34 @@ class customTrainer(StepTrainer):
 
     def train(self):
         self.best_reward = -np.inf
+        self.running_config = None
 
         for timestep in range(self.cfg.timesteps):
             super().train()
+            cost = 0
+
+            if(len(self.env.detector_state) > 2):
+                self.running_config = self.env.detector_state
+                obs = self.env._obs_and_metrics()
             
-            obs = self.env._obs_and_metrics()
-            reward, cost = self.env.calculate_reward(self.env.detector_state, obs[1], obs[2], self.env.spatial_res, self.env.tof_margin, self.env.time_res)
+            if self.running_config is not None:
+                _, cost = self.env.calculate_reward(self.running_config, obs[1], obs[2], self.env.spatial_res, self.env.tof_margin, self.env.time_res)
             
             #print best detector state and reward if reward is better than previous best
-            if reward > self.best_reward:
+            if self.env.reward > self.best_reward and self.running_config is not None:
                 log_msg = (
                         f"[BEST REWARD] Timestep: {timestep} | "
                         f"Best Reward: {self.best_reward:.4f} | "
-                        f"Detector State: {self.env.detector_state}"
+                        f"Detector State: {self.running_config}"
                     )
                 self.logger.info(log_msg)
-                self.best_reward = reward
-                if(self.env.detector_state is not None and len(self.env.detector_state) > 1):
-                    self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.env.detector_state), z_planes=self.env.detector_state, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[3], y_hits=obs[4], n_tracks_show=self.env.n_tracks, 
-                                            label=f"Detector 3D - Reward: {reward:.2f}, Planes: {len(self.env.detector_state)}\ndist theta: {obs[1]:.2f}, dist beta: {obs[2]:.2f}\ncost: {cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
+                self.best_reward = self.env.reward
+                if(self.running_config is not None and len(self.running_config) > 1):
+                    self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[3], y_hits=obs[4], n_tracks_show=self.env.n_tracks, 
+                                            label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {len(self.running_config)}\ndist theta: {obs[1]:.2f}, dist beta: {obs[2]:.2f}\ncost: {cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
 
             if timestep % self.log_interval == 0:
-                self._real_log_health(timestep=timestep, reward=reward, cost=cost)
+                self._real_log_health(timestep=timestep, reward=self.env.reward, cost=cost)
 
 
     def _real_log_health(self, timestep, reward, cost):
