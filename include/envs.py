@@ -100,14 +100,14 @@ class SimpleRoTDetector(gym.Env):
 
 
 class SimplePotentialDetector(SimpleRoTDetector):
-    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0):
-        super().__init__(n_tracks=n_tracks, spatial_res=spatial_res, time_res=time_res, tof_margin=tof_margin)
+    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, debug = False, reward_mode = 'length'):
+        super().__init__(n_tracks=n_tracks, spatial_res=spatial_res, time_res=time_res, tof_margin=tof_margin, debug=debug, reward_mode=reward_mode)
         
     def step(self, action):
         plane_position = self.placement_range[0] + (float(action[0]) + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
         plane_position = float(np.clip(plane_position, self.placement_range[0], self.placement_range[1]))
         stop_signal = float(action[1])
-        reward = 0.0
+        self.reward = 0.0
         
         should_stop = stop_signal > 0.5 and len(self.detector_state) > 1
         terminated = False
@@ -124,10 +124,13 @@ class SimplePotentialDetector(SimpleRoTDetector):
         
         obs, theta_dist, beta_dist, x_hits, y_hits = self._obs_and_metrics()
         if(len(self.detector_state) > 1):
-            reward, cost = self.calculate_reward(self.detector_state, theta_dist, beta_dist, self.spatial_res, self.tof_margin, self.time_res)
+            self.reward, cost = self.calculate_reward(self.detector_state, theta_dist, beta_dist, self.spatial_res, self.tof_margin, self.time_res)
             if self.debug:
-                print(f"Terminated: {terminated}, Truncated: {truncated}, Detector state: {self.detector_state}, and stop_signal: {stop_signal}, and reward: {reward}, cost: {cost}") 
-        return obs, float(reward)/10, terminated, truncated, {}
+                print(f"Terminated: {terminated}, Truncated: {truncated}, Detector state: {self.detector_state}, and stop_signal: {stop_signal}, and reward: {self.reward}, cost: {cost}") 
+
+            if terminated or truncated:
+                self.global_seed += 1
+        return obs, float(self.reward)/10, terminated, truncated, {}
         
 
 class classicalOptimizingDetector(SimpleRoTDetector):

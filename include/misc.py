@@ -236,7 +236,7 @@ class reward_calculator:
             cost = 0.0
         else:
             cost = detector_state[-1] * 0.01
-        reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
+        reward = 50.0 - beta_dist / 10.0 - theta_dist / 10.0 - cost
         reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
         reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
         return reward, cost
@@ -246,7 +246,7 @@ class reward_calculator:
             cost = 0.0
         else:
             cost = detector_state[-1] * 0.01 + len(detector_state) * 0.2  # Fixed: self.len -> len
-        reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
+        reward = 50.0 - beta_dist / 10.0 - theta_dist / 10.0 - cost
         reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
         reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
         return reward, cost
@@ -269,7 +269,7 @@ import numpy as np
 #Write description on tensorboard data, Qvalue, timesteps and so on, comment and explanations
 #Write different versions of the whole system, such as Reward on Termination, and potential reward shaping, and so on
 class customTrainer(StepTrainer):
-    def __init__(self, env, agent, cfg, logdir='runs', health_logs=False, health_dir='health-logs/', health_filename='unnamed-logs', log_interval=10):
+    def __init__(self, env, agent, cfg, logdir='runs', health_logs=False, health_dir='health-logs/', health_filename='unnamed-logs', log_interval=1):
         super().__init__(env=env, agents=agent, cfg=cfg)
         self.writer = SummaryWriter(log_dir="./runs")
         self.env = env
