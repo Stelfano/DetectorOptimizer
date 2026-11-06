@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import logging
+from include.reward import reward_calculator
 import os
 
 
@@ -46,6 +47,7 @@ def simulate_tracks(
     half_plane_size = plane_size / 2
     hit_valid = (np.abs(x_true) <= half_plane_size) & (np.abs(y_true) <= half_plane_size)
 
+    #Questa dovrebbe essere piu una quantizzazione credo però per ora la uso cosi 
     x_meas = x_true + rng.normal(0, spatial_resolution, size=x_true.shape)
     y_meas = y_true + rng.normal(0, spatial_resolution, size=y_true.shape)
     x_meas[~hit_valid] = default_value
@@ -58,28 +60,51 @@ def simulate_tracks(
     t2_meas = delta_t_true + rng.normal(0, time_resolution, n_tracks)
     delta_t_meas = t2_meas - t1_meas
 
-    return x_meas, y_meas, z_planes, theta, theta_deg, beta, delta_t_meas, hit_valid
+    return x_meas, y_meas, z_planes, theta, theta_deg, beta, delta_t_meas, delta_t_true, hit_valid
 
+
+def calculate_angles_theta(x_meas, z_planes):
+    x_meas = x_meas.reshape((-1, len(z_planes)))
+    x_inst = np.vstack([z_planes, np.ones(len(z_planes))]).T
+    angle = np.array([])
+    for i in range(x_meas.shape[0]):
+        line = np.linalg.lstsq(x_inst, x_meas[i])
+        angle = np.append(angle, np.arctan(line[0][0]) * 180 / np.pi)
+    return angle
+
+def calculate_angles_both(x_meas, y_meas, z_planes):
+    angles = np.array([])
+    for i in range(x_meas.shape[0]):
+        data_points = np.column_stack((x_meas[i], y_meas[i], z_planes))   # (N, 3): x, y, z
+        
+        mean = data_points.mean(axis=0)
+        _, S, Vt = np.linalg.svd(data_points - mean, full_matrices=False)
+        d = Vt[0]                    # vettore direzione (x, y, z)
+        if d[2] < 0:                 # fissa il verso: traccia che avanza in z
+            d = -d
+
+        phi_deg = np.degrees(np.arctan2(d[1], d[0])) % 360    # azimut: arctan2(d_y, d_x)
+        theta_deg = np.degrees(np.arccos(d[2]))               # polare rispetto a z
+        angles = np.append(angles, [theta_deg, phi_deg])
+        angles = angles.reshape((-1, 2))  # Reshape to (N, 2) for theta and phi
+
+    return angles
 
 #Rimuovere questo step e fare in modo che la rete sia in grado di fare la stima di beta e theta direttamente dai dati misurati
-def eval_sim(x_meas, y_meas, z_planes, delta_t_meas, hit_valid, n_planes):
-    i_start, i_end = 0, n_planes - 1
-    dx = x_meas[:, i_end] - x_meas[:, i_start]
-    dy = y_meas[:, i_end] - y_meas[:, i_start]
-    dz = z_planes[i_end] - z_planes[i_start]
-    dr = np.sqrt(dx**2 + dy**2)
-    path_length = np.sqrt(dr**2 + dz**2)
+def eval_sim(x_meas, y_meas, z_planes, delta_t_meas, hit_valid, n_planes, tof_margin):
+    i_start = 0
+    i_end = n_planes - 1
+    angles = calculate_angles_both(x_meas, y_meas, z_planes)
+    dz = z_planes[-1] + tof_margin - z_planes[0] - tof_margin
+    dr = dz / np.cos(np.radians(angles[:, 0]))
 
     c = 299.792458
     with np.errstate(divide="ignore", invalid="ignore"):
-        beta_measured = path_length / (c * delta_t_meas)
+        beta_measured = dr / (c * delta_t_meas)
 
-    theta_rad_est = np.arctan2(dr, dz)
-    theta_deg_est = np.degrees(theta_rad_est)
-
-    mask = hit_valid[:, i_start] & hit_valid[:, i_end]
+    mask = hit_valid[:,i_start] & hit_valid[:,i_end]
     beta_measured = np.where(mask, beta_measured, -5.0)
-    theta_deg_est = np.where(mask, theta_deg_est, -5.0)
+    theta_deg_est = np.where(mask, angles[:,0], -5.0)
 
     return {"beta_measured": beta_measured, "theta_measured": theta_deg_est}
 
@@ -219,48 +244,6 @@ def draw_detector(
 
     return fig
 
-class reward_calculator:
-    def __init__(self, mode='length'): # Fixed typo 'lenght' -> 'length'
-        self.mode = mode
-
-    def forward(self, detector_state, beta_dist, theta_dist, spatial_res=None, tof_margin=None, temporal_res=None):
-        if self.mode == 'length':
-            return self.length_reward_incentive(detector_state, beta_dist, theta_dist)
-        elif self.mode == 'length_plane':
-            return self.length_plane_reward(detector_state, beta_dist, theta_dist)
-        elif self.mode == 'length_params':
-            return self.length_and_params_reward(detector_state, beta_dist, theta_dist, spatial_res, tof_margin, temporal_res)
-            
-    def length_reward_incentive(self, detector_state, beta_dist, theta_dist):
-        if len(detector_state) < 2:
-            cost = 0.0
-        else:
-            cost = detector_state[-1] * 0.01
-        reward = 50.0 - beta_dist / 10.0 - theta_dist / 10.0 - cost
-        reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
-        reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
-        return reward, cost
-
-    def length_plane_reward(self, detector_state, beta_dist, theta_dist):
-        if len(detector_state) < 2:
-            cost = 0.0
-        else:
-            cost = detector_state[-1] * 0.01 + len(detector_state) * 0.2  # Fixed: self.len -> len
-        reward = 50.0 - beta_dist / 10.0 - theta_dist / 10.0 - cost
-        reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
-        reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
-        return reward, cost
-
-    def length_and_params_reward(self, detector_state, beta_dist, theta_dist, spatial_res, tof_margin, time_res):
-        if len(detector_state) < 2:
-            cost = 0.0
-        else:
-            cost = detector_state[-1] * 0.01 + len(detector_state) * 0.2 + spatial_res/0.01 + tof_margin * 0.01 + time_res / 0.1  
-        reward = 50.0 - beta_dist / 100.0 - theta_dist / 100.0 - cost
-        reward += 10.0 if beta_dist < 20 else (-10.0 if beta_dist > 40 else 0.0)
-        reward += 10.0 if theta_dist < 20 else (-10.0 if theta_dist > 40 else 0.0)
-        return reward, cost
-
 
 from torch.utils.tensorboard import SummaryWriter
 from skrl.trainers.torch import StepTrainer
@@ -298,7 +281,7 @@ class customTrainer(StepTrainer):
             super().train()
             cost = 0
 
-            if(len(self.env.detector_state) > 2):
+            if(len(self.env.detector_state) >= 2):
                 self.running_config = self.env.detector_state
                 obs = self.env._obs_and_metrics()
             
