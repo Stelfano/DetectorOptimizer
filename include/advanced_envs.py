@@ -76,6 +76,7 @@ class banditOptimizer():
 MAX_PLANES = 20
 class JointDetectorOptimizer(gym.Env):
     def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, n_planes = 5 , debug = False):
+        self.bandit = banditOptimizer(100, eps = 0.2)
         self.debug = debug 
         self.n_tracks = n_tracks
         self.spatial_res = spatial_res
@@ -93,12 +94,14 @@ class JointDetectorOptimizer(gym.Env):
         self.placement_range = (50.0, 1000.0)
 
     def _obs_and_metrics(self):
-        n_planes = len(self.detector_state)
-        obs = np.zeros(self.observation_space.shape, dtype=np.float32)
-        obs[-1] = self.time_res
-        obs[-2] = self.spatial_res
-        obs[-3] = self.tof_margin
-        obs[-4] = self.n_planes
+        n_planes = self.n_planes
+
+        delta_t_meas = np.array([0])
+        delta_t_true = np.array([0])
+        config = [self.time_res, self.spatial_res, self.tof_margin, self.n_planes]
+        padded = np.pad(self.detector_state, (0, self.max_planes - len(self.detector_state)), constant_values=0)
+        obs = np.concatenate([padded, delta_t_meas, delta_t_true, config]).astype(np.float32)
+
         if n_planes < 2:
             return obs, 0, 0, [], [], []
 
@@ -109,10 +112,6 @@ class JointDetectorOptimizer(gym.Env):
             seed=self.global_seed,
         )
 
-        padded = np.zeros(self.max_planes, dtype=np.float32)
-        padded[:n_planes] = self.detector_state
-        obs = np.concatenate([padded, delta_t_meas, delta_t_true]).astype(np.float32)
-
         return obs, delta_t_meas, delta_t_true, x, y, hit_valid
 
     def reset(self, seed=None, options=None):
@@ -122,18 +121,17 @@ class JointDetectorOptimizer(gym.Env):
         return obs, {}
 
     def calculate_reward(self, delta_t_meas, delta_t_true, hit_valid):
-        if(delta_t_true == 0):
+        if(len(self.detector_state) < 2):
             return 0, 0
         
-        cost = self.n_planes * 10  + 1/self.spatial_resolution + self.tof_margin * 1.5 + 1/self.time_resolution**1.5
+        cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
 
         rewards = ([
             1/1 - abs(delta_t_meas[i] - delta_t_true[i]) if hit_valid[i].all() else -0.5
             for i in range(delta_t_meas.shape[0])
         ])
-        rewards = np.array(rewards)
-        rewards -= cost
-        return rewards.sum(), cost
+        rewards = np.array(rewards).sum()
+        return rewards, cost
                 
 
     def step(self, action):
@@ -151,18 +149,19 @@ class JointDetectorOptimizer(gym.Env):
             self.detector_state = np.sort(np.append(self.detector_state, plane_position))
 
         obs, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
-        self.reward, cost = self.calculate_reward(delta_t_meas, delta_t_true, hit_valid)
+        self.reward, self.cost = self.calculate_reward(delta_t_meas, delta_t_true, hit_valid)
         if terminated :
             self.global_seed += 1
             if self.debug:
-                print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {cost}") 
-            self.end_of_episode(self.reward, cost)
+                print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}") 
+            self.end_of_episode(self.reward, self.cost)
         return obs, float(self.reward), terminated, truncated, {}
 
     def end_of_episode(self, reward, cost):
         self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_tracks)), reward=float(reward), cost=float(cost))
-        new_config = banditOptimizer.propose()
-        self.time_res, self.spatial_res, self.tof_margin, self.n_planes = map(float, new_config[:3])
+        new_config = self.bandit.propose()
+        print("New config proposed by the bandit at:", new_config)
+        self.time_res, self.spatial_res, self.tof_margin, self.n_planes = new_config[0], new_config[1], new_config[2], int(new_config[3])
             
     def render(self):
         obs, _, _, x_hits, y_hits, _ = self._obs_and_metrics()
