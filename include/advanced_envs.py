@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import gymnasium as gym
 from include.misc import simulate_tracks, eval_sim, draw_detector
-from include.envs import SimplePotentialDetector
 from gymnasium import spaces
 
 
