@@ -98,7 +98,8 @@ class JointDetectorOptimizer(gym.Env):
         delta_t_meas = np.array([0])
         delta_t_true = np.array([0])
         config = [self.time_res, self.spatial_res, self.tof_margin, self.n_planes]
-        padded = np.pad(self.detector_state, (0, self.max_planes - len(self.detector_state)), constant_values=0)
+        detector_trimmed = self.detector_state[:self.max_planes]
+        padded = np.pad(detector_trimmed, (0, self.max_planes - len(detector_trimmed)), constant_values=0)
         obs = np.concatenate([padded, delta_t_meas, delta_t_true, config]).astype(np.float32)
 
         if n_planes < 2:
