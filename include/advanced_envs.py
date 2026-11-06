@@ -158,7 +158,7 @@ class JointDetectorOptimizer(gym.Env):
         return obs, float(self.reward), terminated, truncated, {}
 
     def end_of_episode(self, reward, cost):
-        self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_tracks)), reward=float(reward), cost=float(cost))
+        self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_planes)), reward=float(reward), cost=float(cost))
         new_config = self.bandit.propose()
         print("New config proposed by the bandit at:", new_config)
         self.time_res, self.spatial_res, self.tof_margin, self.n_planes = new_config[0], new_config[1], new_config[2], int(new_config[3])
