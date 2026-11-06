@@ -1,19 +1,29 @@
 from scipy.stats import Uniform, gaussian_kde
 import matplotlib.pyplot as plt
 import numpy as np
-from include.misc import simulate_tracks, eval_sim
+import gymnasium as gym
+from include.misc import simulate_tracks, eval_sim, draw_detector
 from include.envs import SimplePotentialDetector
+from gymnasium import spaces
 
 
 class banditOptimizer():
+    '''
+    Bandit optimizer is a simple Continuous multi armed bandit sub-environment designed to dynamically optimize
+    the resolution parameters of the detector.
+    
+    It employs a "sliding window" approach by keeping only the WINDOW_SIZE last reward and parameters to have a distribution
+    of resolution and rewards, as the iterative costructive process of the RL agent improves so do the rewards shifting the distribution
+    to the optimal one
+    '''
+    
     def __init__(self, window_size, eps=0.1):
         self.window_size = window_size
-        self.eps = eps                                   # NUOVO: quota di esplorazione uniforme
-        self.lo = np.array([0.001, 0.001, 0.0, 2])       # NUOVO: limiti, gli stessi dei sampler
+        self.eps = eps                                   
+        self.lo = np.array([0.001, 0.001, 0.001, 2])       
         self.hi = np.array([10.0, 10.0, 100.0, 20])
         self.kde = None
 
-        # Samplers, invariati
         self.samplers = {'time_sampler': Uniform(a=0.001, b=10), 'spatial_sampler': Uniform(a=0.001, b=10),
                          'margin_sampler': Uniform(a=0, b=100), 'N_sampler': Uniform(a=2, b=20)}
         self.parameters = {'time_params': np.array([]), 'spatial_params': np.array([]),
@@ -22,7 +32,6 @@ class banditOptimizer():
         self.running_counter = 0
 
     def propose(self):
-        """Configurazione per il prossimo episodio: [time, spatial, tof_margin, N]."""
         if self.kde is not None and np.random.rand() > self.eps:
             for _ in range(5):
                 cand = self.kde.resample(256).T              # batch economico dalla KDE
@@ -63,35 +72,102 @@ class banditOptimizer():
             self.running_counter = 0
 
 
-class BanditDetectorEnv(SimplePotentialDetector):
-    def __init__(self, **kw):
-        super().__init__(**kw)
-        self.bandit = banditOptimizer(100)
-        self.current_cfg = None
-        self.n_cap = self.max_planes
-        self.last_cost = np.nan
 
-    def calculate_reward(self, *args, **kwargs):              # memorizza il costo per passarlo al bandit
-        reward, cost = super().calculate_reward(*args, **kwargs)
-        self.last_cost = cost
-        return reward, cost
+MAX_PLANES = 20
+class JointDetectorOptimizer(gym.Env):
+    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, n_planes = 5 , debug = False):
+        self.debug = debug 
+        self.n_tracks = n_tracks
+        self.spatial_res = spatial_res
+        self.time_res = time_res
+        self.tof_margin = tof_margin
+        self.n_planes = n_planes
+        self.max_planes = MAX_PLANES
+
+        self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
+        obs_dim = self.max_planes + 6
+        self.observation_space = spaces.Box(low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32)
+
+        self.detector_state = np.array([], dtype=np.float32)
+        self.global_seed = 42
+        self.placement_range = (50.0, 1000.0)
+
+    def _obs_and_metrics(self):
+        n_planes = len(self.detector_state)
+        obs = np.zeros(self.observation_space.shape, dtype=np.float32)
+        obs[-1] = self.time_res
+        obs[-2] = self.spatial_res
+        obs[-3] = self.tof_margin
+        obs[-4] = self.n_planes
+        if n_planes < 2:
+            return obs, 0, 0, [], [], []
+
+        x, y, z, _, _, _, delta_t_meas, delta_t_true, hit_valid = simulate_tracks(
+            n_planes=n_planes, spatial_resolution=self.spatial_res,
+            time_resolution=self.time_res, tof_margin=self.tof_margin,
+            z_planes=self.detector_state.copy(), n_tracks=self.n_tracks,
+            seed=self.global_seed,
+        )
+
+        padded = np.zeros(self.max_planes, dtype=np.float32)
+        padded[:n_planes] = self.detector_state
+        obs = np.concatenate([padded, delta_t_meas, delta_t_true]).astype(np.float32)
+
+        return obs, delta_t_meas, delta_t_true, x, y, hit_valid
 
     def reset(self, seed=None, options=None):
-        self.current_cfg = self.bandit.propose()
-        self.time_res, self.spatial_res, self.tof_margin = map(float, self.current_cfg[:3])
-        self.n_cap = min(int(self.current_cfg[3]), self.max_planes)
-        return super().reset(seed=seed, options=options)
+        super().reset(seed=seed)
+        self.detector_state = np.array([], dtype=np.float32)
+        obs, _, _, _, _, _= self._obs_and_metrics()
+        return obs, {}
+
+    def calculate_reward(self, delta_t_meas, delta_t_true, hit_valid):
+        if(delta_t_true == 0):
+            return 0, 0
+        
+        cost = self.n_planes * 10  + 1/self.spatial_resolution + self.tof_margin * 1.5 + 1/self.time_resolution**1.5
+
+        rewards = ([
+            1/1 - abs(delta_t_meas[i] - delta_t_true[i]) if hit_valid[i].all() else -0.5
+            for i in range(delta_t_meas.shape[0])
+        ])
+        rewards = np.array(rewards)
+        rewards -= cost
+        return rewards.sum(), cost
+                
 
     def step(self, action):
-        obs, r, terminated, truncated, info = super().step(action)
+        plane_position = self.placement_range[0] + (action + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
+        plane_position = np.clip(plane_position, self.placement_range[0], self.placement_range[1])
+        self.reward = 0.0
 
-        if not (terminated or truncated) and len(self.detector_state) >= self.n_cap:
-            truncated = True                                  # tetto di piani scelto dal bandit
-            self.global_seed += 1                             # come fa il parent a fine episodio
+        terminated = False
+        truncated = False
 
-        if (terminated or truncated) and self.current_cfg is not None:
-            reward = float(self.reward)                       # reward grezzo del detector finale (senza il /10)
-            self.bandit.update(self.current_cfg, reward, cost=float(self.last_cost))
-            info = {**info, 'config': self.current_cfg.copy(), 'config_reward': reward}
-            self.current_cfg = None                           # un solo update per episodio
-        return obs, r, terminated, truncated, info
+        if(self.detector_state.size == self.n_planes):
+            terminated = True
+
+        if plane_position not in self.detector_state:
+            self.detector_state = np.sort(np.append(self.detector_state, plane_position))
+
+        obs, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
+        self.reward, cost = self.calculate_reward(delta_t_meas, delta_t_true, hit_valid)
+        if terminated :
+            self.global_seed += 1
+            if self.debug:
+                print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {cost}") 
+            self.end_of_episode(self.reward, cost)
+        return obs, float(self.reward), terminated, truncated, {}
+
+    def end_of_episode(self, reward, cost):
+        self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_tracks)), reward=float(reward), cost=float(cost))
+        new_config = banditOptimizer.propose()
+        self.time_res, self.spatial_res, self.tof_margin, self.n_planes = map(float, new_config[:3])
+            
+    def render(self):
+        obs, _, _, x_hits, y_hits, _ = self._obs_and_metrics()
+        reward, cost = self.calculate_reward(self.detector_state, obs[1], obs[2])
+        if len(self.detector_state) < 2:
+            return
+        draw_detector(n_planes=len(self.detector_state), z_planes=self.detector_state, plane_size=100.0, tof_margin=self.tof_margin, x_hits=x_hits, y_hits=y_hits, n_tracks_show=self.n_tracks, 
+                      label=f"Detector 3D - Reward: {reward:.2f}, Planes: {len(self.detector_state)}\ndist theta: {obs[1]:.2f}, dist beta: {obs[2]:.2f}\ncost: {cost:.2f}, \nSpatial_res {self.spatial_res:.2f}, \nTof_margin {self.tof_margin:.2f}, \nTime_res {self.time_res:.2f}")
