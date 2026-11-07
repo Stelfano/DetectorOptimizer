@@ -285,7 +285,7 @@ class customTrainer(StepTrainer):
             
                 
             #print best detector state and reward if reward is better than previous best
-            if self.env.reward > self.best_reward and self.running_config is not None:
+            if self.env.reward > self.best_reward and self.running_config is not None and len(self.env.detector_state) >=2:
                 log_msg = (
                         f"[BEST REWARD] Timestep: {timestep} | "
                         f"Best Reward: {self.best_reward:.4f} | "
@@ -296,6 +296,7 @@ class customTrainer(StepTrainer):
                 if(self.running_config is not None and len(self.running_config) > 1):
                     self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[3], y_hits=obs[4], n_tracks_show=self.env.n_tracks, 
                                             label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.env.n_planes}\n \ncost: {cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
+                    self.env.bandit.plotter()
 
             if timestep % self.log_interval == 0:
                 self._real_log_health(timestep=timestep, reward=self.env.reward, cost=cost)

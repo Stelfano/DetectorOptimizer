@@ -20,7 +20,7 @@ class banditOptimizer():
         self.window_size = window_size
         self.eps = eps                                   
         self.lo = np.array([0.001, 0.001, 0.001, 2])       
-        self.hi = np.array([10.0, 10.0, 100.0, 20])
+        self.hi = np.array([2.0, 2.0, 100.0, 10])
         self.kde = None
 
         self.samplers = {'time_sampler': Uniform(a=0.001, b=10), 'spatial_sampler': Uniform(a=0.001, b=10),
@@ -45,7 +45,7 @@ class banditOptimizer():
     def update(self, params, reward, cost=np.nan, distance=np.nan):
         time_resolution, spatial_resolution, tof_margin, n_planes = params
 
-        if(len(self.parameters['time_params']) >= 100):
+        if(len(self.parameters['time_params']) >= self.window_size):
             self.parameters = {k: np.delete(v, 0) for k, v in self.parameters.items()}
             self.losses = {k: np.delete(v, 0) for k, v in self.losses.items()}
 
@@ -63,12 +63,38 @@ class banditOptimizer():
                                   self.parameters['tof_margin_params'], self.parameters['N_params']])
             T = self.losses['rewards'][self.losses['rewards'] >= np.quantile(self.losses['rewards'], 0.8)].std()
             w = np.exp((self.losses['rewards'] - self.losses['rewards'].max()) / T)
+            self.plotter()
             try:
                 self.kde = gaussian_kde(kde_data, weights=w)
-                self.reward_dist = gaussian_kde(self.losses['rewards'])
             except np.linalg.LinAlgError:                    # NUOVO: covarianza singolare (es. N tutto uguale)
                 pass
             self.running_counter = 0
+
+    def plotter(self):
+        #Plot the current distribution of the parameters and the rewards
+        fig1, axs = plt.subplots(2, 2, figsize=(12, 8))
+        axs[0, 0].hist(self.parameters['time_params'], bins=20, density=True, alpha=0.7, color='blue')
+        axs[0, 0].set_title('Time Resolution Distribution')
+        axs[0, 1].hist(self.parameters['spatial_params'], bins=20, density=True, alpha=0.7, color='green')
+        axs[0, 1].set_title('Spatial Resolution Distribution')
+        axs[1, 0].hist(self.parameters['tof_margin_params'], bins=20, density=True, alpha=0.7, color='orange')
+        axs[1, 0].set_title('TOF Margin Distribution')
+        axs[1, 1].hist(self.parameters['N_params'], bins=20, density=True, alpha=0.7, color = 'red')
+        axs[1, 1].set_title('Number of Planes Distribution')
+        plt.tight_layout()  
+        
+        #Plot the current distribution of the rewards with respect to the parameters
+        fig2, axs = plt.subplots(2, 2, figsize=(12, 8))
+        axs[0, 0].scatter(self.parameters['time_params'], self.losses['rewards'], alpha=0.7, color='blue')
+        axs[0, 0].set_title('Time Resolution vs Reward')
+        axs[0, 1].scatter(self.parameters['spatial_params'], self.losses['rewards'], alpha=0.7, color='green')
+        axs[0, 1].set_title('Spatial Resolution vs Reward')
+        axs[1, 0].scatter(self.parameters['tof_margin_params'], self.losses['rewards'], alpha=0.7, color='orange')
+        axs[1, 0].set_title('TOF Margin vs Reward')
+        axs[1, 1].scatter(self.parameters['N_params'], self.losses['rewards'], alpha=0.7, color='red')
+        axs[1, 1].set_title('Number of Planes vs Reward')
+        plt.tight_layout()
+        return fig1, fig2
 
 
 
@@ -127,7 +153,7 @@ class JointDetectorOptimizer(gym.Env):
         cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
 
         rewards = ([
-            1/1 - abs(delta_t_meas[i] - delta_t_true[i]) if hit_valid[i].all() else -0.5
+            1/1 - abs(delta_t_meas[i] - delta_t_true[i]) if hit_valid[i].all() else 0
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).sum()
