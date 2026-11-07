@@ -4,6 +4,8 @@ import numpy as np
 import gymnasium as gym
 from include.misc import simulate_tracks, eval_sim, draw_detector
 from gymnasium import spaces
+import numpy as np
+
 
 
 class banditOptimizer():
@@ -153,7 +155,7 @@ class JointDetectorOptimizer(gym.Env):
         cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
 
         rewards = ([
-            1/1 - abs(delta_t_meas[i] - delta_t_true[i]) if hit_valid[i].all() else 0
+            1 - np.arctan(delta_t_meas[i] - delta_t_true[i]) + 1 if hit_valid[i].all() else np.arctan(100)
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).sum()
@@ -180,7 +182,9 @@ class JointDetectorOptimizer(gym.Env):
         if self.debug:
             print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}, with spatial_res: {self.spatial_res}, time_res: {self.time_res}, tof_margin: {self.tof_margin}, n_planes: {self.n_planes}") 
 
-        self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_planes)), reward=float(self.reward), cost=float(self.cost))
+        if(len(self.detector_state) >= 2):
+             self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_planes)), reward=float(self.reward), cost=float(self.cost))
+
         if terminated :
             self.global_seed += 1
             self.end_of_episode()
