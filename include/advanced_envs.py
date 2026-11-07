@@ -131,7 +131,7 @@ class JointDetectorOptimizer(gym.Env):
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).sum()
-        return rewards, cost
+        return rewards/100, cost
                 
 
     def step(self, action):
@@ -151,11 +151,12 @@ class JointDetectorOptimizer(gym.Env):
         obs, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
         self.reward, self.cost = self.calculate_reward(delta_t_meas, delta_t_true, hit_valid)
 
+        if self.debug:
+            print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}, with spatial_res: {self.spatial_res}, time_res: {self.time_res}, tof_margin: {self.tof_margin}, n_planes: {self.n_planes}") 
+
         self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_planes)), reward=float(self.reward), cost=float(self.cost))
         if terminated :
             self.global_seed += 1
-            if self.debug:
-                print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}") 
             self.end_of_episode()
         return obs, float(self.reward), terminated, truncated, {}
 
@@ -170,4 +171,4 @@ class JointDetectorOptimizer(gym.Env):
         if len(self.detector_state) < 2:
             return
         draw_detector(n_planes=len(self.detector_state), z_planes=self.detector_state, plane_size=100.0, tof_margin=self.tof_margin, x_hits=x_hits, y_hits=y_hits, n_tracks_show=self.n_tracks, 
-                      label=f"Detector 3D - Reward: {reward:.2f}, Planes: {len(self.detector_state)}\ndist theta: {obs[1]:.2f}, dist beta: {obs[2]:.2f}\ncost: {cost:.2f}, \nSpatial_res {self.spatial_res:.2f}, \nTof_margin {self.tof_margin:.2f}, \nTime_res {self.time_res:.2f}")
+                      label=f"Detector 3D - Reward: {reward:.2f}, Planes: {self.n_planes}\ncost: {cost:.2f}, \nSpatial_res {self.spatial_res:.2f}, \nTof_margin {self.tof_margin:.2f}, \nTime_res {self.time_res:.2f}")

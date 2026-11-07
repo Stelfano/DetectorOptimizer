@@ -295,7 +295,7 @@ class customTrainer(StepTrainer):
                 self.best_reward = self.env.reward
                 if(self.running_config is not None and len(self.running_config) > 1):
                     self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[3], y_hits=obs[4], n_tracks_show=self.env.n_tracks, 
-                                            label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {len(self.env.n_planes)}\n \ncost: {cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
+                                            label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.env.n_planes}\n \ncost: {cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
 
             if timestep % self.log_interval == 0:
                 self._real_log_health(timestep=timestep, reward=self.env.reward, cost=cost)
