@@ -99,6 +99,49 @@ class banditOptimizer():
         return fig1, fig2
 
 
+class reward_calculator():
+    def __init__(self, n_planes, spatial_res, time_res, tof_margin, n_tracks, detector_state):
+        self.n_planes = n_planes
+        self.spatial_res = spatial_res
+        self.time_res = time_res
+        self.tof_margin = tof_margin
+        self.n_tracks = n_tracks
+        self.detector_state = detector_state
+
+    def _set_detector_state_resolution(self, n_planes, spatial_res, time_res, tof_margin, detector_state):
+        self.n_planes = n_planes
+        self.spatial_res = spatial_res
+        self.time_res = time_res
+        self.tof_margin = tof_margin
+        self.detector_state = detector_state
+
+    def delta_mean_arctan(self, delta_t_meas, delta_t_true, hit_valid):
+        if(self.n_planes < 2):
+            return 0, 0
+        
+        cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
+
+        rewards = ([
+            1 - np.arctan(delta_t_meas[i] - delta_t_true[i]) + 1 if hit_valid[i].all() else np.arctan(100)
+            for i in range(delta_t_meas.shape[0])
+        ])
+        rewards = np.array(rewards).mean()
+        return rewards, cost
+
+    def delta_softfplus(self, delta_t_meas, delta_t_true, hit_valid):
+        if(self.n_planes < 2):
+            return 0, 0
+        
+        cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
+
+        rewards = ([
+            np.log(-1 + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(1 + np.exp(20))
+            for i in range(delta_t_meas.shape[0])
+        ])
+        rewards = np.array(rewards).sum()
+        return rewards, cost
+
+        
 
 MAX_PLANES = 20
 class JointDetectorOptimizer(gym.Env):
@@ -111,6 +154,7 @@ class JointDetectorOptimizer(gym.Env):
         self.tof_margin = tof_margin
         self.n_planes = n_planes
         self.max_planes = MAX_PLANES
+        self.reward_calculator = reward_calculator(n_planes, spatial_res, time_res, tof_margin, n_tracks, np.array([], dtype=np.float32))
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         obs_dim = self.max_planes + 6
@@ -149,17 +193,7 @@ class JointDetectorOptimizer(gym.Env):
         return obs, {}
 
     def calculate_reward(self, delta_t_meas, delta_t_true, hit_valid):
-        if(len(self.detector_state) < 2):
-            return 0, 0
-        
-        cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
-
-        rewards = ([
-            1 - np.arctan(delta_t_meas[i] - delta_t_true[i]) + 1 if hit_valid[i].all() else np.arctan(100)
-            for i in range(delta_t_meas.shape[0])
-        ])
-        rewards = np.array(rewards).sum()
-        return rewards/100, cost
+        return self.reward_calculator.delta_mean_arctan(delta_t_meas, delta_t_true, hit_valid)
                 
 
     def step(self, action):
@@ -177,6 +211,7 @@ class JointDetectorOptimizer(gym.Env):
             self.detector_state = np.sort(np.append(self.detector_state, plane_position))
 
         obs, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
+        self.reward_calculator._set_detector_state_resolution(self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
         self.reward, self.cost = self.calculate_reward(delta_t_meas, delta_t_true, hit_valid)
 
         if self.debug:
