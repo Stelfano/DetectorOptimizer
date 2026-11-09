@@ -2,7 +2,7 @@ from scipy.stats import Uniform, gaussian_kde
 import matplotlib.pyplot as plt
 import numpy as np
 import gymnasium as gym
-from include.misc import simulate_tracks, eval_sim, draw_detector
+from include.misc import simulate_tracks, eval_sim, draw_detector, calculate_angles_both
 from gymnasium import spaces
 import numpy as np
 
@@ -122,20 +122,20 @@ class reward_calculator():
         cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
 
         rewards = ([
-            1 - np.arctan(delta_t_meas[i] - delta_t_true[i]) + 1 if hit_valid[i].all() else np.arctan(100)
+            1 - np.arctan(delta_t_meas[i] - delta_t_true[i]) + 1 if hit_valid[i].all() else 1 - np.arctan(100)
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).mean()
         return rewards, cost
 
-    def delta_softfplus(self, delta_t_meas, delta_t_true, hit_valid):
+    def delta_softplus(self, delta_t_meas, delta_t_true, hit_valid):
         if(self.n_planes < 2):
             return 0, 0
         
         cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
 
         rewards = ([
-            np.log(-1 + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(1 + np.exp(20))
+            np.log(-1 + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(-1 + np.exp(20))
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).sum()
@@ -183,6 +183,11 @@ class JointDetectorOptimizer(gym.Env):
             z_planes=self.detector_state.copy(), n_tracks=self.n_tracks,
             seed=self.global_seed,
         )
+
+        delta_t_meas_mean = delta_t_meas.mean()        
+        delta_t_true_mean = delta_t_true.mean()        
+        obs[len(padded)+1] = delta_t_meas_mean
+        obs[len(padded)+2] = delta_t_true_mean
 
         return obs, delta_t_meas, delta_t_true, x, y, hit_valid
 
@@ -232,7 +237,7 @@ class JointDetectorOptimizer(gym.Env):
             
     def render(self):
         obs, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
-        reward, cost = self.calculate_reward(self.detector_state, delta_t_meas, delta_t_true, hit_valid)
+        reward, cost = self.calculate_reward(delta_t_meas, delta_t_true, hit_valid)
         if len(self.detector_state) < 2:
             return
         draw_detector(n_planes=len(self.detector_state), z_planes=self.detector_state, plane_size=100.0, tof_margin=self.tof_margin, x_hits=x_hits, y_hits=y_hits, n_tracks_show=self.n_tracks, 
