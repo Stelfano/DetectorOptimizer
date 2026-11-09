@@ -129,7 +129,6 @@ def draw_detector(
         asse Y grafico = x fisico
         asse Z grafico = y fisico
     """
-
     z_planes = z_planes[:n_planes]
     x_hits = x_hits[:, :n_planes]
     y_hits = y_hits[:, :n_planes]
@@ -282,7 +281,6 @@ class customTrainer(StepTrainer):
             if(len(self.env.detector_state) >= 2):
                 self.running_config = self.env.detector_state
                 obs = self.env._obs_and_metrics()
-            
                 
             #print best detector state and reward if reward is better than previous best
             if self.env.reward > self.best_reward and self.running_config is not None and len(self.env.detector_state) >=2:
@@ -294,7 +292,9 @@ class customTrainer(StepTrainer):
                 self.logger.info(log_msg)
                 self.best_reward = self.env.reward
                 if(self.running_config is not None and len(self.running_config) > 1):
-                    self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[3], y_hits=obs[4], n_tracks_show=self.env.n_tracks, 
+                    print(len(self.running_config))
+                    print(obs[3].shape)
+                    self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[6], y_hits=obs[7], n_tracks_show=self.env.n_tracks, 
                                             label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.env.n_planes}\n \ncost: {self.env.cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
                     self.env.bandit.plotter()
 

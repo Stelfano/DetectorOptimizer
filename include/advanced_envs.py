@@ -2,7 +2,7 @@ from scipy.stats import Uniform, gaussian_kde
 import matplotlib.pyplot as plt
 import numpy as np
 import gymnasium as gym
-from include.misc import simulate_tracks, eval_sim, draw_detector, calculate_angles_both
+from include.misc import simulate_tracks, eval_sim, draw_detector, calculate_angles_theta
 from gymnasium import spaces
 import numpy as np
 
@@ -128,8 +128,6 @@ class reward_calculator():
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).mean()
-        if (cost > self.budget):
-            rewards -= cost - self.budget
         return rewards, cost
 
     def delta_softplus(self, delta_t_meas, delta_t_true, hit_valid):
@@ -143,9 +141,45 @@ class reward_calculator():
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).sum()
-        if (cost > self.budget):
-            rewards -= cost - self.budget
         return rewards, cost
+
+    def theta_beta_arctan(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid):
+        if self.n_planes < 2:
+            return 0,0
+        
+        cost = self.composite_cost(self.gamma)
+
+        rewards = ([
+            2 - np.arctan(theta_meas[i] - theta_true[i] + 1) * np.arctan(beta_meas[i] - beta_true[i] + 1) if hit_valid[i].all() else 2 - np.arctan(100) * np.arctan(100)
+            for i in range(theta_meas.shape[0])
+        ])
+        rewards = np.array(rewards).mean()
+        return rewards, cost
+
+    def theta_beta_softplus(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid):
+        if self.n_planes < 2:
+            return 0,0
+        
+        cost = self.composite_cost(self.gamma)
+
+        rewards = ([
+            5 - np.log(1 + np.e**(abs(theta_meas - theta_true)/10 + abs(beta_meas - beta_true)/10)) if hit_valid[i].all() else 5 - np.e**(10+10)
+            for i in range(theta_meas.shape[0])
+        ])
+        rewards = np.array(rewards).mean()
+        return rewards, cost
+
+    def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid):
+        return self.reward_calculator.delta_mean_arctan(delta_t_meas, delta_t_true, hit_valid)
+
+    def calculate_reward_theta_beta(self, x_meas, y_meas, delta_t_meas, hit_valid, theta, beta):
+
+        if(len(self.detector_state) >=2):
+            ev = eval_sim(x_meas, y_meas, self.detector_state, delta_t_meas, hit_valid, len(self.detector_state), self.tof_margin)
+        else:
+            return 0, 0
+        return self.theta_beta_arctan(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid)
+                
 
     def composite_cost(self, gamma=1.0):
         resolution_cost = 1/self.spatial_res + 1/self.time_res**2
@@ -166,7 +200,7 @@ class JointDetectorOptimizer(gym.Env):
         self.reward_calculator = reward_calculator(n_planes, spatial_res, time_res, tof_margin, n_tracks, np.array([], dtype=np.float32))
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
-        obs_dim = self.max_planes + 6
+        obs_dim = self.max_planes + 10
         self.observation_space = spaces.Box(low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32)
 
         self.detector_state = np.array([], dtype=np.float32)
@@ -178,15 +212,19 @@ class JointDetectorOptimizer(gym.Env):
 
         delta_t_meas = np.array([0])
         delta_t_true = np.array([0])
+        theta_deg = np.array([0])
+        theta_deg_meas = np.array([0])
+        beta = np.array([0])
+        beta_meas = np.array([0])
         config = [self.time_res, self.spatial_res, self.tof_margin, self.n_planes]
         detector_trimmed = self.detector_state[:self.max_planes]
         padded = np.pad(detector_trimmed, (0, self.max_planes - len(detector_trimmed)), constant_values=0)
-        obs = np.concatenate([padded, delta_t_meas, delta_t_true, config]).astype(np.float32)
+        obs = np.concatenate([padded, theta_deg, theta_deg_meas, beta, beta_meas, delta_t_meas, delta_t_true, config]).astype(np.float32)
 
         if n_planes < 2:
             return obs, 0, 0, [], [], []
 
-        x, y, z, _, _, _, delta_t_meas, delta_t_true, hit_valid = simulate_tracks(
+        x, y, z, theta, theta_deg, beta, delta_t_meas, delta_t_true, hit_valid = simulate_tracks(
             n_planes=n_planes, spatial_resolution=self.spatial_res,
             time_resolution=self.time_res, tof_margin=self.tof_margin,
             z_planes=self.detector_state.copy(), n_tracks=self.n_tracks,
@@ -195,20 +233,26 @@ class JointDetectorOptimizer(gym.Env):
 
         delta_t_meas_mean = delta_t_meas.mean()        
         delta_t_true_mean = delta_t_true.mean()        
-        obs[len(padded)+1] = delta_t_meas_mean
-        obs[len(padded)+2] = delta_t_true_mean
+        ev = eval_sim(x, y, z, delta_t_meas, hit_valid, len(self.detector_state), self.tof_margin)
+        theta_deg_meas_mean = np.array(ev['theta_measured']).mean()
+        beta_meas_mean = np.array(ev['beta_measured']).mean()
+        theta_deg_mean = np.array(theta_deg).mean()
+        beta_mean = np.array(beta).mean()
+        obs[len(padded)+1] = theta_deg_mean
+        obs[len(padded)+2] = theta_deg_meas_mean
+        obs[len(padded)+3] = beta_mean
+        obs[len(padded)+4] = beta_meas_mean
+        obs[len(padded)+5] = delta_t_meas_mean
+        obs[len(padded)+6] = delta_t_true_mean
 
-        return obs, delta_t_meas, delta_t_true, x, y, hit_valid
+        return obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x, y, hit_valid
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         self.detector_state = np.array([], dtype=np.float32)
-        obs, _, _, _, _, _= self._obs_and_metrics()
+        obs, _, _, _, _, _, _, _, _= self._obs_and_metrics()
         return obs, {}
 
-    def calculate_reward(self, delta_t_meas, delta_t_true, hit_valid):
-        return self.reward_calculator.delta_mean_arctan(delta_t_meas, delta_t_true, hit_valid)
-                
 
     def step(self, action):
         plane_position = self.placement_range[0] + (action + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
@@ -224,15 +268,15 @@ class JointDetectorOptimizer(gym.Env):
         if plane_position not in self.detector_state:
             self.detector_state = np.sort(np.append(self.detector_state, plane_position))
 
-        obs, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
+        obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
         self.reward_calculator._set_detector_state_resolution(self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
-        self.reward, self.cost = self.calculate_reward(delta_t_meas, delta_t_true, hit_valid)
+        self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta)
 
         if self.debug:
             print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}, with spatial_res: {self.spatial_res}, time_res: {self.time_res}, tof_margin: {self.tof_margin}, n_planes: {self.n_planes}") 
 
         if(len(self.detector_state) >= 2):
-             self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_planes)), reward=float(self.reward), cost=float(self.cost), distance=delta_t_meas - delta_t_true)
+             self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state))), reward=float(self.reward), cost=float(self.cost), distance=delta_t_meas - delta_t_true)
 
         if terminated :
             self.global_seed += 1
@@ -245,8 +289,8 @@ class JointDetectorOptimizer(gym.Env):
         self.time_res, self.spatial_res, self.tof_margin, self.n_planes = new_config[0], new_config[1], new_config[2], int(new_config[3])
             
     def render(self):
-        obs, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
-        reward, cost = self.calculate_reward(delta_t_meas, delta_t_true, hit_valid)
+        obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
+        reward, cost = self.reward_calculator.calculate_reward_theta_beta(x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta)
         if len(self.detector_state) < 2:
             return
         draw_detector(n_planes=len(self.detector_state), z_planes=self.detector_state, plane_size=100.0, tof_margin=self.tof_margin, x_hits=x_hits, y_hits=y_hits, n_tracks_show=self.n_tracks, 
