@@ -87,26 +87,28 @@ class banditOptimizer():
         
         #Plot the current distribution of the rewards with respect to the parameters
         fig2, axs = plt.subplots(2, 2, figsize=(12, 8))
-        axs[0, 0].scatter(self.parameters['time_params'], self.losses['rewards'], alpha=0.7, color='blue')
+        axs[0, 0].scatter(self.parameters['time_params'], self.losses['rewards'], alpha=0.7, c=self.losses['costs'])
         axs[0, 0].set_title('Time Resolution vs Reward')
-        axs[0, 1].scatter(self.parameters['spatial_params'], self.losses['rewards'], alpha=0.7, color='green')
+        axs[0, 1].scatter(self.parameters['spatial_params'], self.losses['rewards'], alpha=0.7, c=self.losses['costs'])
         axs[0, 1].set_title('Spatial Resolution vs Reward')
-        axs[1, 0].scatter(self.parameters['tof_margin_params'], self.losses['rewards'], alpha=0.7, color='orange')
+        axs[1, 0].scatter(self.parameters['tof_margin_params'], self.losses['rewards'], alpha=0.7, c=self.losses['costs'])
         axs[1, 0].set_title('TOF Margin vs Reward')
-        axs[1, 1].scatter(self.parameters['N_params'], self.losses['rewards'], alpha=0.7, color='red')
+        axs[1, 1].scatter(self.parameters['N_params'], self.losses['rewards'], alpha=0.7, c=self.losses["costs"])
         axs[1, 1].set_title('Number of Planes vs Reward')
         plt.tight_layout()
         return fig1, fig2
 
 
 class reward_calculator():
-    def __init__(self, n_planes, spatial_res, time_res, tof_margin, n_tracks, detector_state):
+    def __init__(self, n_planes, spatial_res, time_res, tof_margin, n_tracks, detector_state, budget=100):
         self.n_planes = n_planes
         self.spatial_res = spatial_res
         self.time_res = time_res
         self.tof_margin = tof_margin
         self.n_tracks = n_tracks
         self.detector_state = detector_state
+        self.budget = budget
+        self.gamma = 1
 
     def _set_detector_state_resolution(self, n_planes, spatial_res, time_res, tof_margin, detector_state):
         self.n_planes = n_planes
@@ -119,31 +121,38 @@ class reward_calculator():
         if(self.n_planes < 2):
             return 0, 0
         
-        cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
+        cost = self.composite_cost(self.gamma)
 
         rewards = ([
             1 - np.arctan(delta_t_meas[i] - delta_t_true[i]) + 1 if hit_valid[i].all() else 1 - np.arctan(100)
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).mean()
+        if (cost > self.budget):
+            rewards -= cost - self.budget
         return rewards, cost
 
     def delta_softplus(self, delta_t_meas, delta_t_true, hit_valid):
         if(self.n_planes < 2):
             return 0, 0
         
-        cost = self.n_planes * 10  + 1/self.spatial_res + self.tof_margin * 1.5 + 1/self.time_res**1.5
+        cost = self.composite_cost(self.gamma)
 
         rewards = ([
             np.log(-1 + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(-1 + np.exp(20))
             for i in range(delta_t_meas.shape[0])
         ])
         rewards = np.array(rewards).sum()
+        if (cost > self.budget):
+            rewards -= cost - self.budget
         return rewards, cost
 
-        
+    def composite_cost(self, gamma=1.0):
+        resolution_cost = 1/self.spatial_res + 1/self.time_res**2
+        structural_cost = self.n_planes * 5 + np.sqrt(self.detector_state.max())
+        return gamma * (resolution_cost + structural_cost)
 
-MAX_PLANES = 20
+MAX_PLANES = 10
 class JointDetectorOptimizer(gym.Env):
     def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, n_planes = 5, bandit_window_size = 1000, eps = 0.1, debug = False):
         self.bandit = banditOptimizer(bandit_window_size, eps)
@@ -223,7 +232,7 @@ class JointDetectorOptimizer(gym.Env):
             print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}, with spatial_res: {self.spatial_res}, time_res: {self.time_res}, tof_margin: {self.tof_margin}, n_planes: {self.n_planes}") 
 
         if(len(self.detector_state) >= 2):
-             self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_planes)), reward=float(self.reward), cost=float(self.cost))
+             self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, self.n_planes)), reward=float(self.reward), cost=float(self.cost), distance=delta_t_meas - delta_t_true)
 
         if terminated :
             self.global_seed += 1
