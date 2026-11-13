@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import logging
+import os
 
 
 def simulate_tracks(
@@ -249,13 +250,14 @@ import numpy as np
 #Write description on tensorboard data, Qvalue, timesteps and so on, comment and explanations
 #Write different versions of the whole system, such as Reward on Termination, and potential reward shaping, and so on
 class customTrainer(StepTrainer):
-    def __init__(self, env, agent, cfg, logdir='runs', health_logs=False, health_dir='health-logs/', health_filename='unnamed-logs', log_interval=1):
+    def __init__(self, env, agent, cfg, logdir='runs', health_logs=False, health_dir='health-logs/', health_filename='unnamed-logs', log_interval=10):
         super().__init__(env=env, agents=agent, cfg=cfg)
         self.writer = SummaryWriter(log_dir="./runs")
         self.env = env
         self.logger = None
         self.agent = agent
         self.cfg = cfg
+        self.log_interval = log_interval
 
         logging.basicConfig(
             filename=health_dir+cfg.experiment.experiment_name,
@@ -265,7 +267,6 @@ class customTrainer(StepTrainer):
         )
         if health_logs:
             self.logger = logging.getLogger("NetworkHealth")
-            self.log_interval = log_interval
             self.health_logs = health_logs
         else:
             self._real_log_health = lambda *args, **kwargs : None
@@ -273,6 +274,10 @@ class customTrainer(StepTrainer):
     def train(self):
         self.best_reward = -np.inf
         self.running_config = None
+        self.embedding_step = 0
+        total_embeds = np.array([])
+        reward_embed = np.array([])
+        self.create_embdedding()
 
         for timestep in range(self.cfg.timesteps):
             super().train()
@@ -281,6 +286,10 @@ class customTrainer(StepTrainer):
             if(len(self.env.detector_state) >= 2):
                 self.running_config = self.env.detector_state
                 obs = self.env._obs_and_metrics()
+                embed = np.array([k[-1] for k in self.env.bandit.parameters.values()])
+                reward_embed = np.append(reward_embed, [self.env.bandit.losses['rewards'][-1]])
+                total_embeds = np.vstack([total_embeds, embed]) if total_embeds.shape[0] != 0 else embed
+                self.embedding_step+=1
                 
             #print best detector state and reward if reward is better than previous best
             if self.env.reward > self.best_reward and self.running_config is not None and len(self.env.detector_state) >=2:
@@ -292,16 +301,19 @@ class customTrainer(StepTrainer):
                 self.logger.info(log_msg)
                 self.best_reward = self.env.reward
                 if(self.running_config is not None and len(self.running_config) > 1):
-                    print(len(self.running_config))
-                    print(obs[3].shape)
                     self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[6], y_hits=obs[7], n_tracks_show=self.env.n_tracks, 
                                             label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.env.n_planes}\n \ncost: {self.env.cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
-                    self.env.bandit.plotter()
+                    #self.env.bandit.plotter()
 
-            if timestep % self.log_interval == 0:
+            if (timestep+1) % self.log_interval == 0:
                 self._real_log_health(timestep=timestep, reward=self.env.reward, cost=cost)
+                self.writer.add_histogram("Time_res_dist", self.env.bandit.parameters['time_params'], global_step=timestep)
+                self.writer.add_histogram("Spatial_res_dist", self.env.bandit.parameters['spatial_params'], global_step=timestep)
+                self.writer.add_histogram("Tof_margin_dist", self.env.bandit.parameters['tof_margin_params'], global_step=timestep)
+                self.writer.add_histogram("N_planes_dist", self.env.bandit.parameters['N_params'], global_step=timestep)
 
-
+                #self.update_embedding(bandit=self.env.bandit, iteration=timestep)
+                
     def _real_log_health(self, timestep, reward, cost):
         health_data = self._get_network_health()
         
@@ -349,3 +361,30 @@ class customTrainer(StepTrainer):
             "actor_loss": actor_loss,
             "critic_loss": critic_loss
         }
+
+    def create_embdedding(self, logdir='runs', logfile='tensors.tsv', metadata_file = 'metadata.tsv', experiment_name='00001'):
+        if not os.path.exists(logdir+'/'+experiment_name+"/Detector_config/"):
+            os.makedirs(logdir+'/'+experiment_name+"/Detector_config/")
+            
+        with open(logdir+"/"+experiment_name+"/Detector_config/"+metadata_file, "w+") as record_file:
+            print("%s %s %s %s" % ("reward", "cost", "iteration", "distribution_iter"), file=record_file)
+
+        with open(logdir+"/projector_config.pbtxt", "a+") as projector_config:
+            print("embeddings {\n\ttensor_name: \"Detector_config:"+experiment_name+"\"", file=projector_config)
+            print("\tmetadata_path: \""+experiment_name+"/Detector_config/"+metadata_file+"\"", file=projector_config)
+            print("\ttensor_path: \""+experiment_name+"/Detector_config/"+logfile+"\"", file=projector_config)
+            print("}", file=projector_config)
+        return
+    
+    def update_embedding(self, logdir = 'runs', logfile = 'tensors.tsv', metadata_file='metadata.tsv', experiment_name="00001", bandit=None, iteration=0):
+        parameters = [k[-1] for k in bandit.parameters.values()]
+        losses = [k[-1] for k in bandit.losses.values()]
+        distribution_iter = iteration/bandit.window_size
+        
+        with open(logdir+'/'+experiment_name+'/Detector_config/'+logfile, "a+") as record_file:
+            print("%f %f %f %d" % (parameters[0], parameters[1], parameters[2], parameters[3]), file=record_file)
+
+        with open(logdir+'/'+experiment_name+'/Detector_config/'+metadata_file, "a+") as record_file:
+            print("%f %f %d %d" % (losses[2], losses[1], iteration, distribution_iter), file=record_file)
+
+        return

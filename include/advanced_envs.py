@@ -65,7 +65,6 @@ class banditOptimizer():
                                   self.parameters['tof_margin_params'], self.parameters['N_params']])
             T = self.losses['rewards'][self.losses['rewards'] >= np.quantile(self.losses['rewards'], 0.8)].std()
             w = np.exp((self.losses['rewards'] - self.losses['rewards'].max()) / T)
-            self.plotter()
             try:
                 self.kde = gaussian_kde(kde_data, weights=w)
             except np.linalg.LinAlgError:                    # NUOVO: covarianza singolare (es. N tutto uguale)
