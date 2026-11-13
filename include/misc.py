@@ -252,7 +252,7 @@ import numpy as np
 class customTrainer(StepTrainer):
     def __init__(self, env, agent, cfg, logdir='runs', health_logs=False, health_dir='health-logs/', health_filename='unnamed-logs', log_interval=10):
         super().__init__(env=env, agents=agent, cfg=cfg)
-        self.writer = SummaryWriter(log_dir="./runs")
+        self.writer = SummaryWriter(log_dir=logdir)
         self.env = env
         self.logger = None
         self.agent = agent
@@ -303,7 +303,6 @@ class customTrainer(StepTrainer):
                 if(self.running_config is not None and len(self.running_config) > 1):
                     self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[6], y_hits=obs[7], n_tracks_show=self.env.n_tracks, 
                                             label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.env.n_planes}\n \ncost: {self.env.cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
-                    #self.env.bandit.plotter()
 
             if (timestep+1) % self.log_interval == 0:
                 self._real_log_health(timestep=timestep, reward=self.env.reward, cost=cost)
@@ -311,7 +310,8 @@ class customTrainer(StepTrainer):
                 self.writer.add_histogram("Spatial_res_dist", self.env.bandit.parameters['spatial_params'], global_step=timestep)
                 self.writer.add_histogram("Tof_margin_dist", self.env.bandit.parameters['tof_margin_params'], global_step=timestep)
                 self.writer.add_histogram("N_planes_dist", self.env.bandit.parameters['N_params'], global_step=timestep)
-
+                self.writer.add_figure("Bandit Distributions", self.env.bandit.plotter()[0])
+                self.writer.add_figure("Bandit Distributions", self.env.bandit.plotter()[1])
                 #self.update_embedding(bandit=self.env.bandit, iteration=timestep)
                 
     def _real_log_health(self, timestep, reward, cost):
