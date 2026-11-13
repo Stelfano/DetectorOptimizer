@@ -25,8 +25,8 @@ class banditOptimizer():
         self.hi = np.array([2.0, 2.0, 100.0, 10])
         self.kde = None
 
-        self.samplers = {'time_sampler': Uniform(a=0.001, b=10), 'spatial_sampler': Uniform(a=0.001, b=10),
-                         'margin_sampler': Uniform(a=0, b=100), 'N_sampler': Uniform(a=2, b=20)}
+        self.samplers = {'time_sampler': Uniform(a=self.lo[0], b=self.hi[0]), 'spatial_sampler': Uniform(a=self.lo[1], b=self.hi[1]),
+                         'margin_sampler': Uniform(a=self.lo[2], b=self.hi[2]), 'N_sampler': Uniform(a=self.lo[3], b=self.hi[3])}
         self.parameters = {'time_params': np.array([]), 'spatial_params': np.array([]),
                            'tof_margin_params': np.array([]), 'N_params': np.array([])}
         self.losses = {'distances': np.array([]), 'costs': np.array([]), 'rewards': np.array([])}
@@ -162,7 +162,7 @@ class reward_calculator():
         cost = self.composite_cost(self.gamma)
 
         rewards = ([
-            5 - np.log(1 + np.e**(abs(theta_meas - theta_true)/10 + abs(beta_meas - beta_true)/10)) if hit_valid[i].all() else 5 - np.e**(10+10)
+            5 - np.log(1 + np.e**(abs(theta_meas[i] - theta_true[i])/10 + abs(beta_meas[i] - beta_true[i])/10)) if hit_valid[i].all() else 5 - np.e**(1+1)
             for i in range(theta_meas.shape[0])
         ])
         rewards = np.array(rewards).mean()
@@ -177,7 +177,7 @@ class reward_calculator():
             ev = eval_sim(x_meas, y_meas, self.detector_state, delta_t_meas, hit_valid, len(self.detector_state), self.tof_margin)
         else:
             return 0, 0
-        return self.theta_beta_arctan(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid)
+        return self.theta_beta_softplus(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid)
                 
 
     def composite_cost(self, gamma=1.0):
