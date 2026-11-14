@@ -1,5 +1,6 @@
 from scipy.stats import Uniform, gaussian_kde
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 import numpy as np
 import gymnasium as gym
 from include.misc import simulate_tracks, eval_sim, draw_detector, calculate_angles_theta
@@ -71,30 +72,84 @@ class banditOptimizer():
                 pass
             self.running_counter = 0
 
-    def plotter(self):
-        #Plot the current distribution of the parameters and the rewards
-        fig1, axs = plt.subplots(2, 2, figsize=(12, 8))
-        axs[0, 0].hist(self.parameters['time_params'], bins=20, density=True, alpha=0.7, color='blue')
-        axs[0, 0].set_title('Time Resolution Distribution')
-        axs[0, 1].hist(self.parameters['spatial_params'], bins=20, density=True, alpha=0.7, color='green')
-        axs[0, 1].set_title('Spatial Resolution Distribution')
-        axs[1, 0].hist(self.parameters['tof_margin_params'], bins=20, density=True, alpha=0.7, color='orange')
-        axs[1, 0].set_title('TOF Margin Distribution')
-        axs[1, 1].hist(self.parameters['N_params'], bins=20, density=True, alpha=0.7, color = 'red')
-        axs[1, 1].set_title('Number of Planes Distribution')
-        plt.tight_layout()  
+    def plotter(self, budget):
+        thr = np.percentile(self.losses['rewards'], 80)
+        top = np.asarray(self.losses['rewards']) >= thr
+        top10 = np.argsort(self.losses['rewards'])[-10:]
+
         
-        #Plot the current distribution of the rewards with respect to the parameters
-        fig2, axs = plt.subplots(2, 2, figsize=(12, 8))
-        axs[0, 0].scatter(self.parameters['time_params'], self.losses['rewards'], alpha=0.7, c=self.losses['costs'])
-        axs[0, 0].set_title('Time Resolution vs Reward')
-        axs[0, 1].scatter(self.parameters['spatial_params'], self.losses['rewards'], alpha=0.7, c=self.losses['costs'])
-        axs[0, 1].set_title('Spatial Resolution vs Reward')
-        axs[1, 0].scatter(self.parameters['tof_margin_params'], self.losses['rewards'], alpha=0.7, c=self.losses['costs'])
-        axs[1, 0].set_title('TOF Margin vs Reward')
-        axs[1, 1].scatter(self.parameters['N_params'], self.losses['rewards'], alpha=0.7, c=self.losses["costs"])
-        axs[1, 1].set_title('Number of Planes vs Reward')
+        fig1, axs = plt.subplots(2, 2, figsize=(12, 8))
+        p = np.asarray(self.parameters['time_params'])
+        axs[0, 0].hist([p[~top], p[top]], bins=np.histogram_bin_edges(p, bins=100), stacked=True, alpha=0.7, color=['blue', 'red'], label=['altri', 'top 20%'])
+        axs[0, 0].set_title('Time Resolution Distribution')
+        p = np.asarray(self.parameters['spatial_params'])
+        axs[0, 1].hist([p[~top], p[top]], bins=np.histogram_bin_edges(p, bins=100), stacked=True, alpha=0.7, color=['green', 'blue'], label=['altri', 'top 20%'])
+        axs[0, 1].set_title('Spatial Resolution Distribution')
+        p = np.asarray(self.parameters['tof_margin_params'])
+        axs[1, 0].hist([p[~top], p[top]], bins=np.histogram_bin_edges(p, bins=100), stacked=True, alpha=0.7, color=['orange', 'green'], label=['altri', 'top 20%'])
+        axs[1, 0].set_title('TOF Margin Distribution')
+        p = np.asarray(self.parameters['N_params'])
+        axs[1, 1].hist([p[~top], p[top]], bins=np.histogram_bin_edges(p, bins=100), stacked=True, alpha=0.7, color=['red', 'blue'], label = ['altri', 'top 20%'])
+        axs[1, 1].set_title('Number of Planes Distribution')
+        axs[0, 0].legend()
+        axs[0, 1].legend()
+        axs[1, 0].legend()
+        axs[1, 1].legend()
         plt.tight_layout()
+
+        order = np.argsort(self.losses['rewards'])[::-1][:10]   # order[0] = il migliore
+
+        for ax, key in zip(axs.ravel(), ['time_params', 'spatial_params', 'tof_margin_params', 'N_params']):
+            vals = np.asarray(self.parameters[key])[order]
+            ax.plot(vals, np.full(len(vals), -0.02), '|', color='black', markersize=12,
+                    markeredgewidth=1.5, alpha=0.6,
+                    transform=ax.get_xaxis_transform(), clip_on=False)
+            for rank, (v, idx) in enumerate(zip(vals, order), start=1):
+                ax.annotate(f'{rank}', xy=(v, -0.02), xycoords=ax.get_xaxis_transform(),
+                            xytext=(0, -9 - 8 * (rank % 2)), textcoords='offset points',
+                            ha='center', va='top', fontsize=7, annotation_clip=False)
+            ax.tick_params(axis='x', pad=22)   # sposta i tick label più in basso
+                    
+               #Plot the current distribution of the rewards with respect to the parameters
+        fig2, axs = plt.subplots(2, 2, figsize=(12, 8))
+        min_cost = self.losses['costs'].min() 
+      
+        normalized_cost = (self.losses['costs'] - min_cost) / (budget - min_cost)
+        s1 = axs[0, 0].scatter(self.parameters['time_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
+        axs[0, 0].set_title('Time Resolution vs Reward')
+        axs[0, 0].grid(True)
+        axs[0, 1].scatter(self.parameters['spatial_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
+        axs[0, 1].set_title('Spatial Resolution vs Reward')
+        axs[0, 1].grid(True)
+        axs[1, 0].scatter(self.parameters['tof_margin_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
+        axs[1, 0].set_title('TOF Margin vs Reward')
+        axs[1, 0].grid(True)
+        axs[1, 1].scatter(self.parameters['N_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
+        axs[1, 1].set_title('Number of Planes vs Reward')
+        axs[1, 1].grid(True)
+        plt.tight_layout()
+        fig2.colorbar(s1, ax=axs, orientation='vertical', fraction=.05)
+
+        rewards = np.asarray(self.losses['rewards'])
+        order = np.argsort(rewards)[::-1][:10]   # order[0] = il migliore
+        nc = np.asarray(normalized_cost)
+        q80 = np.percentile(self.losses['rewards'], 80)
+
+        for ax in axs.ravel():
+            ax.axhline(q80, color='black', linestyle='--', linewidth=1, alpha=0.7)
+
+        axs[0, 0].text(0.01, q80, f'80° percentile = {q80:.3g}', transform=axs[0, 0].get_yaxis_transform(), ha='left', va='bottom', fontsize=8)
+        axs[0, 1].text(0.01, q80, f'80° percentile = {q80:.3g}', transform=axs[0, 0].get_yaxis_transform(), ha='left', va='bottom', fontsize=8)
+        axs[1, 0].text(0.01, q80, f'80° percentile = {q80:.3g}', transform=axs[0, 0].get_yaxis_transform(), ha='left', va='bottom', fontsize=8)
+        axs[1, 1].text(0.01, q80, f'80° percentile = {q80:.3g}', transform=axs[0, 0].get_yaxis_transform(), ha='left', va='bottom', fontsize=8)
+
+        for ax, key in zip(axs.ravel(), ['time_params', 'spatial_params', 'tof_margin_params', 'N_params']):
+            x = np.asarray(self.parameters[key])
+            for rank, idx in enumerate(order, start=1):
+                ax.annotate(str(rank), xy=(x[idx], rewards[idx]), ha='center', va='center',
+                            fontsize=11, fontweight='bold', path_effects=[pe.withStroke(linewidth=2, foreground='black')],
+                            color=s1.cmap(s1.norm(nc[idx])))
+        
         return fig1, fig2
 
 
@@ -187,7 +242,8 @@ class reward_calculator():
 
 MAX_PLANES = 10
 class JointDetectorOptimizer(gym.Env):
-    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, n_planes = 5, bandit_window_size = 1000, eps = 0.1, debug = False):
+    def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, n_planes = 5,
+                reward_on_termination=False, bandit_window_size = 1000, eps = 0.1, debug = False):
         self.bandit = banditOptimizer(bandit_window_size, eps)
         self.debug = debug 
         self.n_tracks = n_tracks
@@ -196,6 +252,7 @@ class JointDetectorOptimizer(gym.Env):
         self.tof_margin = tof_margin
         self.n_planes = n_planes
         self.max_planes = MAX_PLANES
+        self.reward_on_termination = reward_on_termination
         self.reward_calculator = reward_calculator(n_planes, spatial_res, time_res, tof_margin, n_tracks, np.array([], dtype=np.float32))
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
@@ -268,16 +325,17 @@ class JointDetectorOptimizer(gym.Env):
             self.detector_state = np.sort(np.append(self.detector_state, plane_position))
 
         obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
-        self.reward_calculator._set_detector_state_resolution(self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
-        self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta)
+        if self.reward_on_termination or terminated:
+            self.reward_calculator._set_detector_state_resolution(self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
+            self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta)
 
         if self.debug:
             print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}, with spatial_res: {self.spatial_res}, time_res: {self.time_res}, tof_margin: {self.tof_margin}, n_planes: {self.n_planes}") 
 
-        if(len(self.detector_state) >= 2):
+        if((len(self.detector_state) >= 2 and terminated) or (len(self.self.detector_state) >= 2 and not self.reward_on_termination)):
              self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state))), reward=float(self.reward), cost=float(self.cost), distance=delta_t_meas - delta_t_true)
 
-        if terminated :
+        if terminated:
             self.global_seed += 1
             self.end_of_episode()
         return obs, float(self.reward), terminated, truncated, {}
