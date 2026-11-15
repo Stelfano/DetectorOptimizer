@@ -127,7 +127,6 @@ class banditOptimizer():
         axs[1, 1].scatter(self.parameters['N_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
         axs[1, 1].set_title('Number of Planes vs Reward')
         axs[1, 1].grid(True)
-        plt.tight_layout()
         fig2.colorbar(s1, ax=axs, orientation='vertical', fraction=.05)
 
         rewards = np.asarray(self.losses['rewards'])
@@ -149,6 +148,7 @@ class banditOptimizer():
                 ax.annotate(str(rank), xy=(x[idx], rewards[idx]), ha='center', va='center',
                             fontsize=11, fontweight='bold', path_effects=[pe.withStroke(linewidth=2, foreground='black')],
                             color=s1.cmap(s1.norm(nc[idx])))
+        plt.tight_layout()
         
         return fig1, fig2
 
@@ -210,14 +210,14 @@ class reward_calculator():
         rewards = np.array(rewards).mean()
         return rewards, cost
 
-    def theta_beta_softplus(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid):
+    def theta_beta_softplus(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, upper_val = 10):
         if self.n_planes < 2:
             return 0,0
         
         cost = self.composite_cost(self.gamma)
 
         rewards = ([
-            5 - np.log(1 + np.e**(abs(theta_meas[i] - theta_true[i])/10 + abs(beta_meas[i] - beta_true[i])/10)) if hit_valid[i].all() else 5 - np.e**(1+1)
+            upper_val - np.log(1 + np.e**(abs(theta_meas[i] - theta_true[i])/10 + abs(beta_meas[i] - beta_true[i])/10)) if hit_valid[i].all() else upper_val - np.e**(1+1)
             for i in range(theta_meas.shape[0])
         ])
         rewards = np.array(rewards).mean()
@@ -226,13 +226,13 @@ class reward_calculator():
     def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid):
         return self.reward_calculator.delta_mean_arctan(delta_t_meas, delta_t_true, hit_valid)
 
-    def calculate_reward_theta_beta(self, x_meas, y_meas, delta_t_meas, hit_valid, theta, beta):
+    def calculate_reward_theta_beta(self, x_meas, y_meas, delta_t_meas, hit_valid, theta, beta, upper_val = 10):
 
         if(len(self.detector_state) >=2):
             ev = eval_sim(x_meas, y_meas, self.detector_state, delta_t_meas, hit_valid, len(self.detector_state), self.tof_margin)
         else:
             return 0, 0
-        return self.theta_beta_softplus(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid)
+        return self.theta_beta_softplus(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, upper_val=upper_val)
                 
 
     def composite_cost(self, gamma=1.0):
@@ -314,25 +314,26 @@ class JointDetectorOptimizer(gym.Env):
         plane_position = self.placement_range[0] + (action + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
         plane_position = np.clip(plane_position, self.placement_range[0], self.placement_range[1])
         self.reward = 0.0
+        self.cost = 0.0
 
         terminated = False
         truncated = False
 
-        if(self.detector_state.size == self.n_planes):
+        if(len(self.detector_state) == self.n_planes):
             terminated = True
 
         if plane_position not in self.detector_state:
             self.detector_state = np.sort(np.append(self.detector_state, plane_position))
 
         obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
-        if self.reward_on_termination or terminated:
+        if not self.reward_on_termination or terminated:
             self.reward_calculator._set_detector_state_resolution(self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
-            self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta)
+            self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, upper_val = 20)
 
         if self.debug:
             print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}, with spatial_res: {self.spatial_res}, time_res: {self.time_res}, tof_margin: {self.tof_margin}, n_planes: {self.n_planes}") 
 
-        if((len(self.detector_state) >= 2 and terminated) or (len(self.self.detector_state) >= 2 and not self.reward_on_termination)):
+        if((len(self.detector_state) >= 2 and terminated) or (len(self.detector_state) >= 2 and not self.reward_on_termination)):
              self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state))), reward=float(self.reward), cost=float(self.cost), distance=delta_t_meas - delta_t_true)
 
         if terminated:

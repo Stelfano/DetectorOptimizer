@@ -273,7 +273,8 @@ class customTrainer(StepTrainer):
 
     def train(self):
         self.best_reward = -np.inf
-        self.running_config = None
+        self.running_config = []
+        self.running_params = [0,0,0,0]
         self.embedding_step = 0
         total_embeds = np.array([])
         reward_embed = np.array([])
@@ -282,17 +283,22 @@ class customTrainer(StepTrainer):
         for timestep in range(self.cfg.timesteps):
             super().train()
             cost = 0
+            self.running_params
 
             if(len(self.env.detector_state) >= 2):
                 self.running_config = self.env.detector_state
+                self.running_params[0] = self.env.spatial_res
+                self.running_params[1] = self.env.time_res
+                self.running_params[2] = self.env.tof_margin
+                self.running_params[3] = self.env.n_planes
                 obs = self.env._obs_and_metrics()
-                embed = np.array([k[-1] for k in self.env.bandit.parameters.values()])
-                reward_embed = np.append(reward_embed, [self.env.bandit.losses['rewards'][-1]])
-                total_embeds = np.vstack([total_embeds, embed]) if total_embeds.shape[0] != 0 else embed
-                self.embedding_step+=1
+                #embed = np.array([k[-1] for k in self.env.bandit.parameters.values()])
+                #reward_embed = np.append(reward_embed, [self.env.bandit.losses['rewards'][-1]])
+                #total_embeds = np.vstack([total_embeds, embed]) if total_embeds.shape[0] != 0 else embed
+                #self.embedding_step+=1
                 
             #print best detector state and reward if reward is better than previous best
-            if self.env.reward > self.best_reward and self.running_config is not None and len(self.env.detector_state) >=2:
+            if self.env.reward > self.best_reward and len(self.running_config) >=2 and self.env.reward != 0:
                 log_msg = (
                         f"[BEST REWARD] Timestep: {timestep} | "
                         f"Best Reward: {self.best_reward:.4f} | "
@@ -300,9 +306,8 @@ class customTrainer(StepTrainer):
                     )
                 self.logger.info(log_msg)
                 self.best_reward = self.env.reward
-                if(self.running_config is not None and len(self.running_config) > 1):
-                    self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.env.tof_margin, x_hits=obs[6], y_hits=obs[7], n_tracks_show=self.env.n_tracks, 
-                                            label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.env.n_planes}\n \ncost: {self.env.cost:.2f}, \nSpatial_res {self.env.spatial_res:.2f}, \nTof_margin {self.env.tof_margin:.2f}, \nTime_res {self.env.time_res:.2f}"), global_step=timestep)
+                self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.running_params[2], x_hits=obs[6], y_hits=obs[7], n_tracks_show=self.env.n_tracks, 
+                                        label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.running_params[3]}\n \ncost: {self.env.cost:.2f}, \nSpatial_res {self.running_params[0]:.2f}, \nTof_margin {self.running_params[2]:.2f}, \nTime_res {self.running_params[1]:.2f}"), global_step=timestep)
 
             if (timestep+1) % self.log_interval == 0:
                 self._real_log_health(timestep=timestep, reward=self.env.reward, cost=cost)
@@ -311,7 +316,7 @@ class customTrainer(StepTrainer):
                 self.writer.add_histogram("Tof_margin_dist", self.env.bandit.parameters['tof_margin_params'], global_step=timestep)
                 self.writer.add_histogram("N_planes_dist", self.env.bandit.parameters['N_params'], global_step=timestep)
                 self.writer.add_figure("Bandit Distributions", self.env.bandit.plotter()[0])
-                self.writer.add_figure("Bandit Distributions", self.env.bandit.plotter()[1])
+                self.writer.add_figure("Bandit Scatterplot", self.env.bandit.plotter()[1])
                 #self.update_embedding(bandit=self.env.bandit, iteration=timestep)
                 
     def _real_log_health(self, timestep, reward, cost):
