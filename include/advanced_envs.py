@@ -217,7 +217,7 @@ class reward_calculator():
         cost = self.composite_cost(self.gamma)
 
         rewards = ([
-            upper_val - np.log(1 + np.e**(abs(theta_meas[i] - theta_true[i])/10 + abs(beta_meas[i] - beta_true[i])/10)) if hit_valid[i].all() else upper_val - np.e**(1+1)
+            upper_val - np.log(1 + np.e**(abs(theta_meas[i] - theta_true[i])/10 + abs(beta_meas[i] - beta_true[i]))) if hit_valid[i].all() else upper_val - np.e**(1+1)
             for i in range(theta_meas.shape[0])
         ])
         rewards = np.array(rewards).mean()
