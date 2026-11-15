@@ -254,6 +254,7 @@ class JointDetectorOptimizer(gym.Env):
         self.max_planes = MAX_PLANES
         self.reward_on_termination = reward_on_termination
         self.reward_calculator = reward_calculator(n_planes, spatial_res, time_res, tof_margin, n_tracks, np.array([], dtype=np.float32))
+        self.min_sep = 1.0
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         obs_dim = self.max_planes + 10
@@ -264,43 +265,35 @@ class JointDetectorOptimizer(gym.Env):
         self.placement_range = (50.0, 1000.0)
 
     def _obs_and_metrics(self):
-        n_planes = self.n_planes
+        n_placed = len(self.detector_state)
 
-        delta_t_meas = np.array([0])
-        delta_t_true = np.array([0])
-        theta_deg = np.array([0])
-        theta_deg_meas = np.array([0])
-        beta = np.array([0])
-        beta_meas = np.array([0])
-        config = [self.time_res, self.spatial_res, self.tof_margin, self.n_planes]
         detector_trimmed = self.detector_state[:self.max_planes]
         padded = np.pad(detector_trimmed, (0, self.max_planes - len(detector_trimmed)), constant_values=0)
-        obs = np.concatenate([padded, theta_deg, theta_deg_meas, beta, beta_meas, delta_t_meas, delta_t_true, config]).astype(np.float32)
+        config = np.array([self.time_res, self.spatial_res, self.tof_margin, self.n_planes], dtype=np.float32)
+        stats = np.zeros(6, dtype=np.float32)
 
-        if n_planes < 2:
-            return obs, 0, 0, [], [], []
+        # Con meno di 2 piani non si può simulare nulla: obs con statistiche a zero
+        if n_placed < 2:
+            obs = np.concatenate([padded, stats, config]).astype(np.float32)
+            return obs, None, None, None, None, None, None, None, None
 
         x, y, z, theta, theta_deg, beta, delta_t_meas, delta_t_true, hit_valid = simulate_tracks(
-            n_planes=n_planes, spatial_resolution=self.spatial_res,
+            n_planes=n_placed, spatial_resolution=self.spatial_res,
             time_resolution=self.time_res, tof_margin=self.tof_margin,
             z_planes=self.detector_state.copy(), n_tracks=self.n_tracks,
             seed=self.global_seed,
         )
+        ev = eval_sim(x, y, z, delta_t_meas, hit_valid, n_placed, self.tof_margin)
 
-        delta_t_meas_mean = delta_t_meas.mean()        
-        delta_t_true_mean = delta_t_true.mean()        
-        ev = eval_sim(x, y, z, delta_t_meas, hit_valid, len(self.detector_state), self.tof_margin)
-        theta_deg_meas_mean = np.array(ev['theta_measured']).mean()
-        beta_meas_mean = np.array(ev['beta_measured']).mean()
-        theta_deg_mean = np.array(theta_deg).mean()
-        beta_mean = np.array(beta).mean()
-        obs[len(padded)+1] = theta_deg_mean
-        obs[len(padded)+2] = theta_deg_meas_mean
-        obs[len(padded)+3] = beta_mean
-        obs[len(padded)+4] = beta_meas_mean
-        obs[len(padded)+5] = delta_t_meas_mean
-        obs[len(padded)+6] = delta_t_true_mean
+        # Layout: [padded (max_planes) | 6 statistiche | config (4)]
+        stats[0] = np.array(theta_deg).mean()
+        stats[1] = np.array(ev['theta_measured']).mean()
+        stats[2] = np.array(beta).mean()
+        stats[3] = np.array(ev['beta_measured']).mean()
+        stats[4] = delta_t_meas.mean()
+        stats[5] = delta_t_true.mean()
 
+        obs = np.concatenate([padded, stats, config]).astype(np.float32)
         return obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x, y, hit_valid
 
     def reset(self, seed=None, options=None):
@@ -310,35 +303,54 @@ class JointDetectorOptimizer(gym.Env):
         return obs, {}
 
 
+    def _free_position(self, pos):
+        """Sposta la posizione finché non è a distanza >= min_sep dagli altri piani."""
+        lo, hi = self.placement_range
+        for direction in (1.0, -1.0):
+            p = float(pos)
+            while np.any(np.abs(self.detector_state - p) < self.min_sep):
+                p += direction * self.min_sep
+            if lo <= p <= hi:
+                return p
+        return float(pos)
+
     def step(self, action):
-        plane_position = self.placement_range[0] + (action + 1.0) / 2.0 * (self.placement_range[1] - self.placement_range[0])
-        plane_position = np.clip(plane_position, self.placement_range[0], self.placement_range[1])
+        a = float(np.asarray(action).reshape(-1)[0])
+        lo, hi = self.placement_range
+        plane_position = np.clip(lo + (a + 1.0) / 2.0 * (hi - lo), lo, hi)
         self.reward = 0.0
         self.cost = 0.0
 
-        terminated = False
+        plane_position = self._free_position(plane_position)
+        self.detector_state = np.sort(np.append(self.detector_state, plane_position)).astype(np.float32)
+
+        terminated = len(self.detector_state) >= self.n_planes
         truncated = False
 
-        if(len(self.detector_state) == self.n_planes):
-            terminated = True
-
-        if plane_position not in self.detector_state:
-            self.detector_state = np.sort(np.append(self.detector_state, plane_position))
-
         obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
+
         if not self.reward_on_termination or terminated:
-            self.reward_calculator._set_detector_state_resolution(self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
-            self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, upper_val = 20)
+            self.reward_calculator._set_detector_state_resolution(
+                self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
+            self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(
+                x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, upper_val=20)
 
         if self.debug:
-            print(f"Terminated: {terminated}, Detector state: {self.detector_state}, and reward: {self.reward}, cost: {self.cost}, with spatial_res: {self.spatial_res}, time_res: {self.time_res}, tof_margin: {self.tof_margin}, n_planes: {self.n_planes}") 
+            print(f"Terminated: {terminated}, Detector state: {self.detector_state}, reward: {self.reward}, "
+                f"cost: {self.cost}, spatial_res: {self.spatial_res}, time_res: {self.time_res}, "
+                f"tof_margin: {self.tof_margin}, n_planes: {self.n_planes}")
 
-        if((len(self.detector_state) >= 2 and terminated) or (len(self.detector_state) >= 2 and not self.reward_on_termination)):
-             self.bandit.update(((self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state))), reward=float(self.reward), cost=float(self.cost), distance=delta_t_meas - delta_t_true)
+        if len(self.detector_state) >= 2 and (terminated or not self.reward_on_termination):
+            self.bandit.update(
+                (self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state)),
+                reward=float(self.reward), cost=float(self.cost),
+                distance=float(np.mean(delta_t_meas - delta_t_true)),  # scalare, non array
+            )
 
         if terminated:
             self.global_seed += 1
             self.end_of_episode()
+
         return obs, float(self.reward), terminated, truncated, {}
 
     def end_of_episode(self):
