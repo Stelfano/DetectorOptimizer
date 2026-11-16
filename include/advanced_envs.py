@@ -257,7 +257,7 @@ class JointDetectorOptimizer(gym.Env):
         self.min_sep = 1.0
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
-        obs_dim = self.max_planes + 10
+        obs_dim = self.max_planes + 7
         self.observation_space = spaces.Box(low=-1e6, high=1e6, shape=(obs_dim,), dtype=np.float32)
 
         self.detector_state = np.array([], dtype=np.float32)
@@ -270,9 +270,8 @@ class JointDetectorOptimizer(gym.Env):
         detector_trimmed = self.detector_state[:self.max_planes]
         padded = np.pad(detector_trimmed, (0, self.max_planes - len(detector_trimmed)), constant_values=0)
         config = np.array([self.time_res, self.spatial_res, self.tof_margin, self.n_planes], dtype=np.float32)
-        stats = np.zeros(6, dtype=np.float32)
+        stats = np.zeros(3, dtype=np.float32)
 
-        # Con meno di 2 piani non si può simulare nulla: obs con statistiche a zero
         if n_placed < 2:
             obs = np.concatenate([padded, stats, config]).astype(np.float32)
             return obs, None, None, None, None, None, None, None, None
@@ -285,13 +284,10 @@ class JointDetectorOptimizer(gym.Env):
         )
         ev = eval_sim(x, y, z, delta_t_meas, hit_valid, n_placed, self.tof_margin)
 
-        # Layout: [padded (max_planes) | 6 statistiche | config (4)]
-        stats[0] = np.array(theta_deg).mean()
-        stats[1] = np.array(ev['theta_measured']).mean()
-        stats[2] = np.array(beta).mean()
-        stats[3] = np.array(ev['beta_measured']).mean()
-        stats[4] = delta_t_meas.mean()
-        stats[5] = delta_t_true.mean()
+        # Layout: [padded (max_planes) | theta_meas, beta_meas, dt_meas | config (4)]
+        stats[0] = np.array(ev['theta_measured']).mean()
+        stats[1] = np.array(ev['beta_measured']).mean()
+        stats[2] = delta_t_meas.mean()
 
         obs = np.concatenate([padded, stats, config]).astype(np.float32)
         return obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x, y, hit_valid
