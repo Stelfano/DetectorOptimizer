@@ -171,79 +171,103 @@ class reward_calculator():
         self.tof_margin = tof_margin
         self.detector_state = detector_state
 
-    def delta_mean_arctan(self, delta_t_meas, delta_t_true, hit_valid):
+    def delta_arctan(self, delta_t_meas, delta_t_true, hit_valid, mode='mean', upper_val=1, cost_as_optimizer = False):
         if(self.n_planes < 2):
             return 0, 0
         
-        cost = self.composite_cost(self.gamma)
+        cost = self.composite_cost()
 
         rewards = ([
-            1 - np.arctan(delta_t_meas[i] - delta_t_true[i]) + 1 if hit_valid[i].all() else 1 - np.arctan(100)
+            upper_val - np.arctan(delta_t_meas[i] - delta_t_true[i]) + 1 if hit_valid[i].all() else upper_val - np.arctan(100)
             for i in range(delta_t_meas.shape[0])
         ])
-        rewards = np.array(rewards).mean()
+        if mode == 'mean':
+            rewards = np.array(rewards).mean() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+        else:
+            rewards = np.array(rewards).sum() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+
         return rewards, cost
 
-    def delta_softplus(self, delta_t_meas, delta_t_true, hit_valid):
+    def delta_softplus(self, delta_t_meas, delta_t_true, hit_valid, mode = 'mean', upper_val = 1, cost_as_optimizer = False):
         if(self.n_planes < 2):
             return 0, 0
         
-        cost = self.composite_cost(self.gamma)
+        cost = self.composite_cost()
 
         rewards = ([
-            np.log(-1 + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(-1 + np.exp(20))
+            -np.log(-upper_val + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(-upper_val + np.exp(20))
             for i in range(delta_t_meas.shape[0])
         ])
-        rewards = np.array(rewards).sum()
+        if mode == 'mean':
+            rewards = np.array(rewards).mean() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+        else:
+            rewards = np.array(rewards).sum() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+
         return rewards, cost
 
-    def theta_beta_arctan(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid):
+    def theta_beta_arctan(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 2, cost_as_optimizer = False):
         if self.n_planes < 2:
             return 0,0
         
-        cost = self.composite_cost(self.gamma)
+        cost = self.composite_cost()
 
         rewards = ([
-            2 - np.arctan(theta_meas[i] - theta_true[i] + 1) * np.arctan(beta_meas[i] - beta_true[i] + 1) if hit_valid[i].all() else 2 - np.arctan(100) * np.arctan(100)
+            upper_val - np.arctan(theta_meas[i] - theta_true[i] + 1) * np.arctan(beta_meas[i] - beta_true[i] + 1) if hit_valid[i].all() else upper_val - np.arctan(100) * np.arctan(100)
             for i in range(theta_meas.shape[0])
         ])
-        rewards = np.array(rewards).mean()
+        if mode == 'mean':
+            rewards = np.array(rewards).mean() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+        else:
+            rewards = np.array(rewards).sum() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+
         return rewards, cost
 
-    def theta_beta_softplus(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, upper_val = 10):
+    def theta_beta_softplus(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 10, cost_as_optimizer = False):
         if self.n_planes < 2:
             return 0,0
         
-        cost = self.composite_cost(self.gamma)
+        cost = self.composite_cost()
 
         rewards = ([
             upper_val - np.log(1 + np.e**(abs(theta_meas[i] - theta_true[i])/10 + abs(beta_meas[i] - beta_true[i]))) if hit_valid[i].all() else upper_val - np.e**(1+1)
             for i in range(theta_meas.shape[0])
         ])
-        rewards = np.array(rewards).mean()
+
+        if mode == 'mean':
+            rewards = np.array(rewards).mean() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+        else:
+            rewards = np.array(rewards).sum() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+
         return rewards, cost
 
-    def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid):
-        return self.reward_calculator.delta_mean_arctan(delta_t_meas, delta_t_true, hit_valid)
-
-    def calculate_reward_theta_beta(self, x_meas, y_meas, delta_t_meas, hit_valid, theta, beta, upper_val = 10):
+    def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid, mode='mean', upper_val=1, function = 'softplus', cost_as_optimzier = False):
+        if function == 'softplus':
+            return self.delta_softplus(delta_t_meas, delta_t_true, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimzier)
+        else:
+            return self.delta_arctan(delta_t_meas, delta_t_true, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimzier)
+        
+    def calculate_reward_theta_beta(self, x_meas, y_meas, delta_t_meas, hit_valid, theta, beta, mode='mean', upper_val=10, function = 'softplus', cost_as_optimizer = False):
 
         if(len(self.detector_state) >=2):
             ev = eval_sim(x_meas, y_meas, self.detector_state, delta_t_meas, hit_valid, len(self.detector_state), self.tof_margin)
         else:
             return 0, 0
-        return self.theta_beta_softplus(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, upper_val=upper_val)
+        if function == 'softplus':
+            return self.theta_beta_softplus(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimizer)
+        else:
+            return self.theta_beta_arctan(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimizer)
                 
 
-    def composite_cost(self, gamma=1.0):
+    def composite_cost(self):
         resolution_cost = 1/self.spatial_res + 1/self.time_res**2
-        structural_cost = self.n_planes * 5 + np.sqrt(self.detector_state.max())
-        return gamma * (resolution_cost + structural_cost)
-
+        structural_cost = self.n_planes * 5 + self.detector_state.max()/10
+        return resolution_cost + structural_cost
+    
 MAX_PLANES = 10
 class JointDetectorOptimizer(gym.Env):
     def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, n_planes = 5,
-                reward_on_termination=False, bandit_window_size = 1000, eps = 0.1, debug = False):
+                reward_on_termination=False, bandit_window_size = 1000, eps = 0.1, debug = False, reward_function = 'softplus',
+                reward_mode = 'mean', reward_upper_val = 10, cost_as_optimizer=False):
         self.bandit = banditOptimizer(bandit_window_size, eps)
         self.debug = debug 
         self.n_tracks = n_tracks
@@ -255,6 +279,11 @@ class JointDetectorOptimizer(gym.Env):
         self.reward_on_termination = reward_on_termination
         self.reward_calculator = reward_calculator(n_planes, spatial_res, time_res, tof_margin, n_tracks, np.array([], dtype=np.float32))
         self.min_sep = 1.0
+        self.reward_mode = reward_mode
+        self.reward_function = reward_function
+        self.cost_as_optimizer = False
+        self.reward_upper_val = reward_upper_val
+        self.cost_as_optimizer = cost_as_optimizer
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         obs_dim = self.max_planes + 7
@@ -284,7 +313,6 @@ class JointDetectorOptimizer(gym.Env):
         )
         ev = eval_sim(x, y, z, delta_t_meas, hit_valid, n_placed, self.tof_margin)
 
-        # Layout: [padded (max_planes) | theta_meas, beta_meas, dt_meas | config (4)]
         stats[0] = np.array(ev['theta_measured']).mean()
         stats[1] = np.array(ev['beta_measured']).mean()
         stats[2] = delta_t_meas.mean()
@@ -300,7 +328,6 @@ class JointDetectorOptimizer(gym.Env):
 
 
     def _free_position(self, pos):
-        """Sposta la posizione finché non è a distanza >= min_sep dagli altri piani."""
         lo, hi = self.placement_range
         for direction in (1.0, -1.0):
             p = float(pos)
@@ -329,7 +356,7 @@ class JointDetectorOptimizer(gym.Env):
             self.reward_calculator._set_detector_state_resolution(
                 self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
             self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(
-                x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, upper_val=20)
+                x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
 
         if self.debug:
             print(f"Terminated: {terminated}, Detector state: {self.detector_state}, reward: {self.reward}, "
@@ -351,12 +378,12 @@ class JointDetectorOptimizer(gym.Env):
 
     def end_of_episode(self):
         new_config = self.bandit.propose()
-        #print("New config proposed by the bandit at:", new_config)
         self.time_res, self.spatial_res, self.tof_margin, self.n_planes = new_config[0], new_config[1], new_config[2], int(new_config[3])
             
     def render(self):
         obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x_hits, y_hits, hit_valid = self._obs_and_metrics()
-        reward, cost = self.reward_calculator.calculate_reward_theta_beta(x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta)
+        reward, cost = self.reward_calculator.calculate_reward_theta_beta(
+                x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
         if len(self.detector_state) < 2:
             return
         draw_detector(n_planes=len(self.detector_state), z_planes=self.detector_state, plane_size=100.0, tof_margin=self.tof_margin, x_hits=x_hits, y_hits=y_hits, n_tracks_show=self.n_tracks, 
