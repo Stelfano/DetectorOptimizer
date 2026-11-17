@@ -182,9 +182,9 @@ class reward_calculator():
             for i in range(delta_t_meas.shape[0])
         ])
         if mode == 'mean':
-            rewards = np.array(rewards).mean() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+            rewards = np.array(rewards).mean() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
         else:
-            rewards = np.array(rewards).sum() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+            rewards = np.array(rewards).sum() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
 
         return rewards, cost
 
@@ -199,9 +199,9 @@ class reward_calculator():
             for i in range(delta_t_meas.shape[0])
         ])
         if mode == 'mean':
-            rewards = np.array(rewards).mean() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+            rewards = np.array(rewards).mean() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
         else:
-            rewards = np.array(rewards).sum() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+            rewards = np.array(rewards).sum() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
 
         return rewards, cost
 
@@ -216,9 +216,9 @@ class reward_calculator():
             for i in range(theta_meas.shape[0])
         ])
         if mode == 'mean':
-            rewards = np.array(rewards).mean() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+            rewards = np.array(rewards).mean() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
         else:
-            rewards = np.array(rewards).sum() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+            rewards = np.array(rewards).sum() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
 
         return rewards, cost
 
@@ -234,9 +234,9 @@ class reward_calculator():
         ])
 
         if mode == 'mean':
-            rewards = np.array(rewards).mean() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+            rewards = np.array(rewards).mean() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
         else:
-            rewards = np.array(rewards).sum() - int(cost_as_optimizer) * self.gamma * (self.budget - cost)
+            rewards = np.array(rewards).sum() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
 
         return rewards, cost
 
@@ -267,7 +267,7 @@ MAX_PLANES = 10
 class JointDetectorOptimizer(gym.Env):
     def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, n_planes = 5,
                 reward_on_termination=False, bandit_window_size = 1000, eps = 0.1, debug = False, reward_function = 'softplus',
-                reward_mode = 'mean', reward_upper_val = 10, cost_as_optimizer=False):
+                reward_mode = 'mean', reward_upper_val = 10, cost_as_optimizer=False, gamma=1):
         self.bandit = banditOptimizer(bandit_window_size, eps)
         self.debug = debug 
         self.n_tracks = n_tracks
@@ -284,6 +284,7 @@ class JointDetectorOptimizer(gym.Env):
         self.cost_as_optimizer = False
         self.reward_upper_val = reward_upper_val
         self.cost_as_optimizer = cost_as_optimizer
+        reward_calculator.gamma = gamma
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         obs_dim = self.max_planes + 7
