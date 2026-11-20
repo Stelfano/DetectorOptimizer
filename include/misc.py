@@ -93,9 +93,9 @@ def calculate_angles_both(x_meas, y_meas, z_planes):
 def eval_sim(x_meas, y_meas, z_planes, delta_t_meas, hit_valid, n_planes, tof_margin):
     i_start = 0
     i_end = n_planes - 1
-    angles = calculate_angles_both(x_meas, y_meas, z_planes)
+    angles = calculate_angles_theta(x_meas, z_planes)
     dz = z_planes[-1] + tof_margin - z_planes[0] - tof_margin
-    dr = dz / np.cos(np.radians(angles[:, 0]))
+    dr = dz / np.cos(np.radians(angles))
 
     c = 299.792458
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -103,7 +103,7 @@ def eval_sim(x_meas, y_meas, z_planes, delta_t_meas, hit_valid, n_planes, tof_ma
 
     mask = hit_valid[:,i_start] & hit_valid[:,i_end]
     beta_measured = np.where(mask, beta_measured, -5.0)
-    theta_deg_est = np.where(mask, angles[:,0], -5.0)
+    theta_deg_est = np.where(mask, angles, -5.0)
 
     return {"beta_measured": beta_measured, "theta_measured": theta_deg_est}
 

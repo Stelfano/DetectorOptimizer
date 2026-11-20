@@ -95,7 +95,6 @@ class banditOptimizer():
         axs[0, 1].legend()
         axs[1, 0].legend()
         axs[1, 1].legend()
-        plt.tight_layout()
 
         order = np.argsort(self.losses['rewards'])[::-1][:10]   # order[0] = il migliore
 
@@ -148,7 +147,6 @@ class banditOptimizer():
                 ax.annotate(str(rank), xy=(x[idx], rewards[idx]), ha='center', va='center',
                             fontsize=11, fontweight='bold', path_effects=[pe.withStroke(linewidth=2, foreground='black')],
                             color=s1.cmap(s1.norm(nc[idx])))
-        plt.tight_layout()
         
         return fig1, fig2
 
@@ -356,8 +354,11 @@ class JointDetectorOptimizer(gym.Env):
         if not self.reward_on_termination or terminated:
             self.reward_calculator._set_detector_state_resolution(
                 self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
-            self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(
-                x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
+            #self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(
+            #    x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
+
+            self.reward, self.cost = self.reward_calculator.calculate_reward_delta(
+                delta_t_meas, delta_t_true, hit_valid, mode=self.reward_mode, upper_val = self.reward_upper_val, function = self.reward_function, cost_as_optimzier=self.cost_as_optimizer)
 
         if self.debug:
             print(f"Terminated: {terminated}, Detector state: {self.detector_state}, reward: {self.reward}, "
