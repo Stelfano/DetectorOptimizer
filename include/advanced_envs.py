@@ -190,10 +190,11 @@ class reward_calculator():
         if(self.n_planes < 2):
             return 0, 0
         
+        beta = 0.5
         cost = self.composite_cost()
 
         rewards = ([
-            -np.log(-upper_val + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(-upper_val + np.exp(20))
+            1/beta - np.log(upper_val + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(upper_val + np.exp(20))
             for i in range(delta_t_meas.shape[0])
         ])
         if mode == 'mean':
