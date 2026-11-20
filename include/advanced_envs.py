@@ -184,11 +184,13 @@ class reward_calculator():
             for i in range(delta_t_meas.shape[0])
         ])
         if mode == 'mean':
-            rewards = np.array(rewards).mean() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+            distance = np.array(rewards).mean()
+            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
         else:
-            rewards = np.array(rewards).sum() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+            distance = np.array(rewards).sum()
+            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
 
-        return rewards, cost
+        return rewards, cost, distance
 
     def delta_softplus(self, delta_t_meas, delta_t_true, hit_valid, mode = 'mean', upper_val = 1, cost_as_optimizer = False):
         if(self.n_planes < 2):
@@ -201,12 +203,15 @@ class reward_calculator():
             1/beta - np.log(upper_val + np.exp(delta_t_meas[i] - delta_t_true[i])) if hit_valid[i].all() else np.log(upper_val + np.exp(20))
             for i in range(delta_t_meas.shape[0])
         ])
-        if mode == 'mean':
-            rewards = np.array(rewards).mean() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
-        else:
-            rewards = np.array(rewards).sum() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
 
-        return rewards, cost
+        if mode == 'mean':
+            distance = np.array(rewards).mean()
+            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+        else:
+            distance = np.array(rewards).sum()
+            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+
+        return rewards, cost, distance
 
     def theta_beta_arctan(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 2, cost_as_optimizer = False):
         if self.n_planes < 2:
@@ -219,11 +224,13 @@ class reward_calculator():
             for i in range(theta_meas.shape[0])
         ])
         if mode == 'mean':
-            rewards = np.array(rewards).mean() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+            distance = np.array(rewards).mean()
+            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
         else:
-            rewards = np.array(rewards).sum() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+            distance = np.array(rewards).sum()
+            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
 
-        return rewards, cost
+        return rewards, cost, distance
 
     def theta_beta_softplus(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 10, cost_as_optimizer = False):
         if self.n_planes < 2:
@@ -237,11 +244,13 @@ class reward_calculator():
         ])
 
         if mode == 'mean':
-            rewards = np.array(rewards).mean() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+            distance = np.array(rewards).mean()
+            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
         else:
-            rewards = np.array(rewards).sum() + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+            distance = np.array(rewards).sum()
+            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
 
-        return rewards, cost
+        return rewards, cost, distance
 
     def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid, mode='mean', upper_val=1, function = 'softplus', cost_as_optimzier = False):
         if function == 'softplus':
@@ -347,6 +356,7 @@ class JointDetectorOptimizer(gym.Env):
         plane_position = np.clip(lo + (a + 1.0) / 2.0 * (hi - lo), lo, hi)
         self.reward = 0.0
         self.cost = 0.0
+        self.distance = 0.0
 
         plane_position = self._free_position(plane_position)
         self.detector_state = np.sort(np.append(self.detector_state, plane_position)).astype(np.float32)
@@ -359,11 +369,11 @@ class JointDetectorOptimizer(gym.Env):
         if not self.reward_on_termination or terminated:
             self.reward_calculator._set_detector_state_resolution(
                 self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
-            #self.reward, self.cost = self.reward_calculator.calculate_reward_theta_beta(
-            #    x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
+            self.reward, self.cost, self.distance = self.reward_calculator.calculate_reward_theta_beta(
+                x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
 
-            self.reward, self.cost = self.reward_calculator.calculate_reward_delta(
-                delta_t_meas, delta_t_true, hit_valid, mode=self.reward_mode, upper_val = self.reward_upper_val, function = self.reward_function, cost_as_optimzier=self.cost_as_optimizer)
+            #self.reward, self.cost, self.distance = self.reward_calculator.calculate_reward_delta(
+            #    delta_t_meas, delta_t_true, hit_valid, mode=self.reward_mode, upper_val = self.reward_upper_val, function = self.reward_function, cost_as_optimzier=self.cost_as_optimizer)
 
         if self.debug:
             print(f"Terminated: {terminated}, Detector state: {self.detector_state}, reward: {self.reward}, "
@@ -374,7 +384,7 @@ class JointDetectorOptimizer(gym.Env):
             self.bandit.update(
                 (self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state)),
                 reward=float(self.reward), cost=float(self.cost),
-                distance=float(np.mean(delta_t_meas - delta_t_true)),
+                distance=self.distance
             )
 
         if terminated:
