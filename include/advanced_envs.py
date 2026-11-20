@@ -113,6 +113,7 @@ class banditOptimizer():
         fig2, axs = plt.subplots(2, 2, figsize=(12, 8))
         min_cost = self.losses['costs'].min() 
       
+        margin=10
         normalized_cost = (self.losses['costs'] - min_cost) / (budget - min_cost)
         s1 = axs[0, 0].scatter(self.parameters['time_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
         axs[0, 0].set_title('Time Resolution vs Reward')
@@ -126,6 +127,9 @@ class banditOptimizer():
         axs[1, 1].scatter(self.parameters['N_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
         axs[1, 1].set_title('Number of Planes vs Reward')
         axs[1, 1].grid(True)
+        lo = np.percentile(self.losses['rewards'], 1)
+        for ax in axs.flat:
+            ax.set_ylim(bottom=lo-margin)
         fig2.colorbar(s1, ax=axs, orientation='vertical', fraction=.05)
 
         rewards = np.asarray(self.losses['rewards'])
