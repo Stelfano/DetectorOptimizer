@@ -315,8 +315,8 @@ class customTrainer(StepTrainer):
                 self.writer.add_histogram("Spatial_res_dist", self.env.bandit.parameters['spatial_params'], global_step=timestep)
                 self.writer.add_histogram("Tof_margin_dist", self.env.bandit.parameters['tof_margin_params'], global_step=timestep)
                 self.writer.add_histogram("N_planes_dist", self.env.bandit.parameters['N_params'], global_step=timestep)
-                self.writer.add_figure("Bandit Distributions", self.env.bandit.plotter(100)[0])
-                self.writer.add_figure("Bandit Scatterplot", self.env.bandit.plotter(100)[1])
+                self.writer.add_figure("Bandit Distributions", self.env.bandit.plotter(100)[0], global_step=timestep)
+                self.writer.add_figure("Bandit Scatterplot", self.env.bandit.plotter(100)[1], global_step=timestep)
                 #self.update_embedding(bandit=self.env.bandit, iteration=timestep)
                 
     def _real_log_health(self, timestep, reward, cost):

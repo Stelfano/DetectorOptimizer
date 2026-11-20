@@ -374,7 +374,7 @@ class JointDetectorOptimizer(gym.Env):
             self.bandit.update(
                 (self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state)),
                 reward=float(self.reward), cost=float(self.cost),
-                distance=float(np.mean(delta_t_meas - delta_t_true)),  # scalare, non array
+                distance=float(np.mean(delta_t_meas - delta_t_true)),
             )
 
         if terminated:
