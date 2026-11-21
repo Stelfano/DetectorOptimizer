@@ -30,7 +30,7 @@ class banditOptimizer():
                          'margin_sampler': Uniform(a=self.lo[2], b=self.hi[2]), 'N_sampler': Uniform(a=self.lo[3], b=self.hi[3])}
         self.parameters = {'time_params': np.array([]), 'spatial_params': np.array([]),
                            'tof_margin_params': np.array([]), 'N_params': np.array([])}
-        self.losses = {'distances': np.array([]), 'costs': np.array([]), 'rewards': np.array([])}
+        self.losses = {'performance': np.array([]), 'costs': np.array([]), 'rewards': np.array([])}
         self.running_counter = 0
 
     def propose(self):
@@ -45,7 +45,7 @@ class banditOptimizer():
         return np.array([s['time_sampler'], s['spatial_sampler'],
                          s['margin_sampler'], round(s['N_sampler'])], dtype=float)
 
-    def update(self, params, reward, cost=np.nan, distance=np.nan):
+    def update(self, params, reward, cost=np.nan, performance=np.nan):
         time_resolution, spatial_resolution, tof_margin, n_planes = params
 
         if(len(self.parameters['time_params']) >= self.window_size):
@@ -56,7 +56,7 @@ class banditOptimizer():
         self.parameters['spatial_params'] = np.append(self.parameters['spatial_params'], spatial_resolution)
         self.parameters['tof_margin_params'] = np.append(self.parameters['tof_margin_params'], tof_margin)
         self.parameters['N_params'] = np.append(self.parameters['N_params'].astype(np.int32), round(n_planes))
-        self.losses['distances'] = np.append(self.losses['distances'], distance)
+        self.losses['performance'] = np.append(self.losses['performance'], performance)
         self.losses['costs'] = np.append(self.losses['costs'], cost)
         self.losses['rewards'] = np.append(self.losses['rewards'], reward)
         self.running_counter += 1
@@ -115,19 +115,19 @@ class banditOptimizer():
       
         margin=10
         normalized_cost = (self.losses['costs'] - min_cost) / (budget - min_cost)
-        s1 = axs[0, 0].scatter(self.parameters['time_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
+        s1 = axs[0, 0].scatter(self.parameters['time_params'], self.losses['performance'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
         axs[0, 0].set_title('Time Resolution vs Reward')
         axs[0, 0].grid(True)
-        axs[0, 1].scatter(self.parameters['spatial_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
+        axs[0, 1].scatter(self.parameters['spatial_params'], self.losses['performance'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
         axs[0, 1].set_title('Spatial Resolution vs Reward')
         axs[0, 1].grid(True)
-        axs[1, 0].scatter(self.parameters['tof_margin_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
+        axs[1, 0].scatter(self.parameters['tof_margin_params'], self.losses['performance'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
         axs[1, 0].set_title('TOF Margin vs Reward')
         axs[1, 0].grid(True)
-        axs[1, 1].scatter(self.parameters['N_params'], self.losses['rewards'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
+        axs[1, 1].scatter(self.parameters['N_params'], self.losses['performance'], alpha=0.7, c=normalized_cost, linewidth=1, cmap='plasma')
         axs[1, 1].set_title('Number of Planes vs Reward')
         axs[1, 1].grid(True)
-        lo = np.percentile(self.losses['rewards'], 1)
+        lo = np.percentile(self.losses['performance'], 1)
         for ax in axs.flat:
             ax.set_ylim(bottom=lo-margin)
         fig2.colorbar(s1, ax=axs, orientation='vertical', fraction=.05)
@@ -232,25 +232,28 @@ class reward_calculator():
 
         return rewards, cost, distance
 
-    def theta_beta_softplus(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 10, cost_as_optimizer = False):
+    def theta_beta_softplus(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 10, cost_as_optimizer = False, return_positive_cost = False):
         if self.n_planes < 2:
             return 0,0
         
         cost = self.composite_cost()
-
+        distances_theta = np.array(abs(theta_meas - theta_true))
+        distances_beta = np.array(abs(beta_meas - beta_true))
+        excess_cost = self.budget - cost if (self.budget - cost > 0 and return_positive_cost) or self.budget - cost < 0 else 0
+        
         rewards = ([
-            upper_val - np.log(1 + np.e**(abs(theta_meas[i] - theta_true[i])/10 + abs(beta_meas[i] - beta_true[i]))) if hit_valid[i].all() else upper_val - np.e**(1+1)
+            upper_val - np.log(1 + np.e**(distances_theta[i]/10 * distances_beta[i])) if hit_valid[i].all() else upper_val - np.e**(3)
             for i in range(theta_meas.shape[0])
         ])
 
         if mode == 'mean':
-            distance = np.array(rewards).mean()
-            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+            performance = np.array(rewards)
+            rewards = performance.mean() + (int(cost_as_optimizer) * self.gamma * excess_cost)
         else:
-            distance = np.array(rewards).sum()
-            rewards = distance + (int(cost_as_optimizer) * self.gamma * (self.budget - cost))
+            performance = np.array(rewards)
+            rewards = performance.sum() + (int(cost_as_optimizer) * self.gamma * excess_cost)
 
-        return rewards, cost, distance
+        return rewards, cost, performance, distances_theta, distances_beta
 
     def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid, mode='mean', upper_val=1, function = 'softplus', cost_as_optimzier = False):
         if function == 'softplus':
@@ -356,7 +359,9 @@ class JointDetectorOptimizer(gym.Env):
         plane_position = np.clip(lo + (a + 1.0) / 2.0 * (hi - lo), lo, hi)
         self.reward = 0.0
         self.cost = 0.0
-        self.distance = 0.0
+        self.performance = 0.0
+        self.distances_theta = np.array([])
+        self.distances_beta = np.array([])
 
         plane_position = self._free_position(plane_position)
         self.detector_state = np.sort(np.append(self.detector_state, plane_position)).astype(np.float32)
@@ -369,7 +374,7 @@ class JointDetectorOptimizer(gym.Env):
         if not self.reward_on_termination or terminated:
             self.reward_calculator._set_detector_state_resolution(
                 self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
-            self.reward, self.cost, self.distance = self.reward_calculator.calculate_reward_theta_beta(
+            self.reward, self.cost, self.performance, self.distances_theta, self.distances_beta = self.reward_calculator.calculate_reward_theta_beta(
                 x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
 
             #self.reward, self.cost, self.distance = self.reward_calculator.calculate_reward_delta(
@@ -384,7 +389,7 @@ class JointDetectorOptimizer(gym.Env):
             self.bandit.update(
                 (self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state)),
                 reward=float(self.reward), cost=float(self.cost),
-                distance=self.distance
+                performance=self.performance
             )
 
         if terminated:

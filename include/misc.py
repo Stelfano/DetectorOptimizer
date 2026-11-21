@@ -119,7 +119,9 @@ def draw_detector(
     x_hits=None,
     y_hits=None,
     n_tracks_show=20,
-    label = "Detector 3D"
+    label = "Detector 3D",
+    theta_dist = None,
+    beta_dist = None
 ):
     """
     Disegna il detector in 3D usando la coordinata fisica z
@@ -133,8 +135,11 @@ def draw_detector(
     z_planes = z_planes[:n_planes]
     x_hits = x_hits[:, :n_planes]
     y_hits = y_hits[:, :n_planes]
-    fig = plt.figure(figsize=(32, 10))
-    ax = fig.add_subplot(111, projection="3d")
+    fig = plt.figure(figsize=(10, 15))
+    gridSpec = fig.add_gridspec(2, 2, height_ratios=[2, 1])
+    ax = fig.add_subplot(gridSpec[0, :], projection="3d")
+    ax_dx = fig.add_subplot(gridSpec[1, 0])
+    ax_dy = fig.add_subplot(gridSpec[1, 1])
 
     half_size = plane_size / 2
 
@@ -231,11 +236,21 @@ def draw_detector(
     ax.set_ylabel("x fisico [mm]")
     ax.set_zlabel("y fisico [mm]")
 
-    ax.set_title("Schema 3D del detector con asse z orizzontale")
-
     # Vista scelta per mostrare z orizzontale
     ax.view_init(elev=21, azim=-70)
     ax.text2D(0.02, 0.95, label, transform=ax.transAxes, fontsize=10)
+
+    bins = 50
+    ax_dx.hist(theta_dist, bins=bins, color="tab:blue", alpha=0.7)
+    ax_dx.set_xlabel("Theta distances")
+    ax_dx.set_ylabel("conteggi")
+    ax_dx.set_title("Distribuzione distanze theta")
+
+    ax_dy.hist(beta_dist, bins=bins, color="tab:green", alpha=0.7)
+    ax_dy.set_xlabel("Beta distances")
+    ax_dy.set_ylabel("conteggi")
+    ax_dy.set_title("Distribuzione distanze Beta")
+    
 
     plt.tight_layout()
     plt.show()
@@ -307,7 +322,8 @@ class customTrainer(StepTrainer):
                 self.logger.info(log_msg)
                 self.best_reward = self.env.reward
                 self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.running_params[2], x_hits=obs[6], y_hits=obs[7], n_tracks_show=self.env.n_tracks, 
-                                        label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.running_params[3]}\nDistance: {self.env.distance:.2f} \ncost: {self.env.cost:.2f}, \nSpatial_res {self.running_params[0]:.2f}, \nTof_margin {self.running_params[2]:.2f}, \nTime_res {self.running_params[1]:.2f}"), global_step=timestep)
+                                        label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.running_params[3]}\nPerfomance(mean): {self.env.performance.mean():.2f}\nDistance theta(mean): {self.env.distances_theta.mean():.2f}\nDistance beta(mean): {self.env.distances_beta.mean():.2f}  \ncost: {self.env.cost:.2f}, \nSpatial_res {self.running_params[0]:.2f}, \nTof_margin {self.running_params[2]:.2f}, \nTime_res {self.running_params[1]:.2f}",
+                                        theta_dist=self.env.distances_theta, beta_dist=self.env.distances_beta), global_step=timestep)
 
             if (timestep+1) % self.log_interval == 0:
                 self._real_log_health(timestep=timestep, reward=self.env.reward, cost=cost)
@@ -317,7 +333,6 @@ class customTrainer(StepTrainer):
                 self.writer.add_histogram("N_planes_dist", self.env.bandit.parameters['N_params'], global_step=timestep)
                 self.writer.add_figure("Bandit Distributions", self.env.bandit.plotter(100)[0], global_step=timestep)
                 self.writer.add_figure("Bandit Scatterplot", self.env.bandit.plotter(100)[1], global_step=timestep)
-                #self.update_embedding(bandit=self.env.bandit, iteration=timestep)
                 
     def _real_log_health(self, timestep, reward, cost):
         health_data = self._get_network_health()
