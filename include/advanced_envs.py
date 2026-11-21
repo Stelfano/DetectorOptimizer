@@ -241,10 +241,33 @@ class reward_calculator():
         distances_beta = np.array(abs(beta_meas - beta_true))
         excess_cost = self.budget - cost if (self.budget - cost > 0 and return_positive_cost) or self.budget - cost < 0 else 0
         
-        rewards = ([
+        rewards = [
             upper_val - np.log(1 + np.e**(distances_theta[i]/10 * distances_beta[i])) if hit_valid[i].all() else upper_val - np.e**(3)
             for i in range(theta_meas.shape[0])
-        ])
+        ]
+
+        if mode == 'mean':
+            performance = np.array(rewards)
+            rewards = performance.mean() + (int(cost_as_optimizer) * self.gamma * excess_cost)
+        else:
+            performance = np.array(rewards)
+            rewards = performance.sum() + (int(cost_as_optimizer) * self.gamma * excess_cost)
+
+        return rewards, cost, performance, distances_theta, distances_beta
+
+    def theta_beta_linear(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 1, cost_as_optimizer = False, return_positive_cost = False):
+        if self.n_planes < 2:
+            return 0,0
+        
+        cost = self.composite_cost()
+        distances_theta = np.array(abs(theta_meas - theta_true))
+        distances_beta = np.array(abs(beta_meas - beta_true))
+        excess_cost = self.budget - cost if (self.budget - cost > 0 and return_positive_cost) or self.budget - cost < 0 else 0
+        
+        rewards = [
+            upper_val / max(distances_theta[i], distances_beta[i]) if hit_valid[i].all() else 0
+            for i in range(theta_meas.shape[0])
+        ]
 
         if mode == 'mean':
             performance = np.array(rewards)
@@ -269,8 +292,10 @@ class reward_calculator():
             return 0, 0
         if function == 'softplus':
             return self.theta_beta_softplus(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimizer)
-        else:
+        elif function == 'arctan':
             return self.theta_beta_arctan(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimizer)
+        elif function == 'linear':
+            return self.theta_beta_linear(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimizer)
                 
 
     def composite_cost(self):
