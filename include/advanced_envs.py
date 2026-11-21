@@ -389,7 +389,7 @@ class JointDetectorOptimizer(gym.Env):
             self.bandit.update(
                 (self.time_res, self.spatial_res, self.tof_margin, len(self.detector_state)),
                 reward=float(self.reward), cost=float(self.cost),
-                performance=self.performance
+                performance=self.performance.mean()
             )
 
         if terminated:
