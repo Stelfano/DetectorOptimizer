@@ -255,7 +255,7 @@ class reward_calculator():
 
         return rewards, cost, performance, distances_theta, distances_beta
 
-    def theta_beta_linear(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 1, cost_as_optimizer = False, return_positive_cost = False, particle_loss_penalty = 1):
+    def theta_beta_linear(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 1, cost_as_optimizer = False, return_positive_cost = False, particle_loss_penalty = 10):
         if self.n_planes < 2:
             return 0,0
 
@@ -268,7 +268,7 @@ class reward_calculator():
         excess_cost = self.budget - cost if (self.budget - cost > 0 and return_positive_cost) or self.budget - cost < 0 else 0
 
         if(cleaned_distance_theta.shape[0] != 0):
-            norm_distance_theta = cleaned_distance_theta 
+            norm_distance_theta = cleaned_distance_theta / 20
             norm_distance_beta = cleaned_distance_beta
                 
             rewards = [
