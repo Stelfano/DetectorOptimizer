@@ -23,7 +23,7 @@ class banditOptimizer():
         self.window_size = window_size
         self.eps = eps                                   
         self.lo = np.array([0.001, 0.001, 0.001, 2])       
-        self.hi = np.array([2.0, 2.0, 100.0, 10])
+        self.hi = np.array([1.0, 1.0, 100.0, 10])
         self.kde = None
 
         self.samplers = {'time_sampler': Uniform(a=self.lo[0], b=self.hi[0]), 'spatial_sampler': Uniform(a=self.lo[1], b=self.hi[1]),
@@ -255,28 +255,37 @@ class reward_calculator():
 
         return rewards, cost, performance, distances_theta, distances_beta
 
-    def theta_beta_linear(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 1, cost_as_optimizer = False, return_positive_cost = False):
+    def theta_beta_linear(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 1, cost_as_optimizer = False, return_positive_cost = False, particle_loss_penalty = 1):
         if self.n_planes < 2:
             return 0,0
-        
+
         cost = self.composite_cost()
         distances_theta = np.array(abs(theta_meas - theta_true))
         distances_beta = np.array(abs(beta_meas - beta_true))
+        n_lost_particles = self.n_tracks - hit_valid.all(axis=1).sum() 
+        cleaned_distance_theta = np.delete(distances_theta, hit_valid.all(axis = 1))
+        cleaned_distance_beta = np.delete(distances_beta, hit_valid.all(axis = 1))
         excess_cost = self.budget - cost if (self.budget - cost > 0 and return_positive_cost) or self.budget - cost < 0 else 0
-        
-        rewards = [
-            upper_val / max(distances_theta[i], distances_beta[i]) if hit_valid[i].all() else 0
-            for i in range(theta_meas.shape[0])
-        ]
+
+        if(cleaned_distance_theta.shape[0] != 0):
+            norm_distance_theta = cleaned_distance_theta / cleaned_distance_theta.max()
+            norm_distance_beta = cleaned_distance_beta / cleaned_distance_beta.max()
+                
+            rewards = [
+                upper_val / max(norm_distance_theta[i], norm_distance_beta[i])
+                for i in range(norm_distance_theta.shape[0])
+            ]
+        else:
+            rewards = [0]
 
         if mode == 'mean':
             performance = np.array(rewards)
-            rewards = performance.mean() + (int(cost_as_optimizer) * self.gamma * excess_cost)
+            rewards = performance.mean() + (int(cost_as_optimizer) * self.gamma * excess_cost) - n_lost_particles * particle_loss_penalty
         else:
             performance = np.array(rewards)
-            rewards = performance.sum() + (int(cost_as_optimizer) * self.gamma * excess_cost)
+            rewards = performance.sum() + (int(cost_as_optimizer) * self.gamma * excess_cost) - n_lost_particles * particle_loss_penalty
 
-        return rewards, cost, performance, distances_theta, distances_beta
+        return rewards, cost, performance, norm_distance_theta, norm_distance_beta
 
     def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid, mode='mean', upper_val=1, function = 'softplus', cost_as_optimzier = False):
         if function == 'softplus':
