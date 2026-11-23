@@ -263,20 +263,22 @@ class reward_calculator():
         distances_theta = np.array(abs(theta_meas - theta_true))
         distances_beta = np.array(abs(beta_meas - beta_true))
         n_lost_particles = self.n_tracks - hit_valid.all(axis=1).sum() 
-        cleaned_distance_theta = np.delete(distances_theta, hit_valid.all(axis = 1))
-        cleaned_distance_beta = np.delete(distances_beta, hit_valid.all(axis = 1))
+        cleaned_distance_theta = np.delete(distances_theta, ~hit_valid.all(axis = 1))
+        cleaned_distance_beta = np.delete(distances_beta, ~hit_valid.all(axis = 1))
         excess_cost = self.budget - cost if (self.budget - cost > 0 and return_positive_cost) or self.budget - cost < 0 else 0
 
         if(cleaned_distance_theta.shape[0] != 0):
-            norm_distance_theta = cleaned_distance_theta / cleaned_distance_theta.max()
-            norm_distance_beta = cleaned_distance_beta / cleaned_distance_beta.max()
+            norm_distance_theta = cleaned_distance_theta 
+            norm_distance_beta = cleaned_distance_beta
                 
             rewards = [
-                upper_val / max(norm_distance_theta[i], norm_distance_beta[i])
+                upper_val / norm_distance_theta[i] * norm_distance_beta[i]
                 for i in range(norm_distance_theta.shape[0])
             ]
         else:
             rewards = [0]
+            norm_distance_beta = [0]
+            norm_distance_theta = [0]
 
         if mode == 'mean':
             performance = np.array(rewards)
