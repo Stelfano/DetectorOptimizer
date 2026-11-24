@@ -93,8 +93,8 @@ def calculate_angles_both(x_meas, y_meas, z_planes):
 def eval_sim(x_meas, y_meas, z_planes, delta_t_meas, hit_valid, n_planes, tof_margin):
     i_start = 0
     i_end = n_planes - 1
-    angles = calculate_angles_theta(x_meas, z_planes)
-    dz = z_planes[-1] + tof_margin - z_planes[0] - tof_margin
+    angles = calculate_angles_both(x_meas, y_meas, z_planes)[:, 0]
+    dz = (z_planes[-1] + tof_margin) - (z_planes[0] - tof_margin)
     dr = dz / np.cos(np.radians(angles))
 
     c = 299.792458
@@ -121,7 +121,9 @@ def draw_detector(
     n_tracks_show=20,
     label = "Detector 3D",
     theta_dist = None,
-    beta_dist = None
+    beta_dist = None,
+    theta_true_dist = None,
+    beta_true_dist = None
 ):
     """
     Disegna il detector in 3D usando la coordinata fisica z
@@ -242,11 +244,13 @@ def draw_detector(
 
     bins = 50
     ax_dx.hist(theta_dist, bins=bins, color="tab:blue", alpha=0.7)
+    ax_dx.hist(theta_true_dist, bins=bins, color='tab:red', alpha = 0.7)
     ax_dx.set_xlabel("Theta distances")
     ax_dx.set_ylabel("conteggi")
     ax_dx.set_title("Distribuzione distanze theta")
 
     ax_dy.hist(beta_dist, bins=bins, color="tab:green", alpha=0.7)
+    ax_dy.hist(beta_true_dist, bins=bins, color='tab:red', alpha = 0.7)
     ax_dy.set_xlabel("Beta distances")
     ax_dy.set_ylabel("conteggi")
     ax_dy.set_title("Distribuzione distanze Beta")
@@ -322,8 +326,8 @@ class customTrainer(StepTrainer):
                 self.logger.info(log_msg)
                 self.best_reward = self.env.reward
                 self.writer.add_figure("Best Detector State", draw_detector(n_planes=len(self.running_config), z_planes=self.running_config, plane_size=100.0, tof_margin=self.running_params[2], x_hits=obs[6], y_hits=obs[7], n_tracks_show=self.env.n_tracks, 
-                                        label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.running_params[3]}\nPerfomance(mean): {self.env.performance.mean():.2f}\nDistance theta(mean): {self.env.distances_theta.mean():.2f}\nDistance beta(mean): {self.env.distances_beta.mean():.2f}  \ncost: {self.env.cost:.2f}, \nSpatial_res {self.running_params[0]:.2f}, \nTof_margin {self.running_params[2]:.2f}, \nTime_res {self.running_params[1]:.2f}",
-                                        theta_dist=self.env.distances_theta, beta_dist=self.env.distances_beta), global_step=timestep)
+                                        label=f"Detector 3D - Reward: {self.env.reward:.2f}, Planes: {self.running_params[3]}\nPerfomance(mean): {self.env.performance.mean():.2f}\nDistance theta(mean): {self.env.distances_theta.mean():.2f}\nDistance beta(mean): {self.env.distances_beta.mean():.2f}  \ncost: {self.env.cost:.2f}, \nSpatial_res {self.running_params[0]:.2f}, \nTof_margin {self.running_params[2]:.2f}, \nTime_res {self.running_params[1]:.2f}\nGeom_efficiency_theta(mean): {self.env.metrics['theta_geom_efficiency'].mean():.2f}\nGeom_efficiency_beta(mean): {self.env.metrics['beta_geom_efficiency'].mean():.2f}\nWasserstein(Theta): {self.env.metrics['wasserstein_theta']:.2f}\nWasserstein(Beta): {self.env.metrics['wasserstein_beta']:.2f}",
+                                        theta_dist=self.env.distances_theta, beta_dist=self.env.distances_beta, theta_true_dist=self.env.metrics['theta_true_dist'], beta_true_dist=self.env.metrics['beta_true_dist']), global_step=timestep)
 
             if (timestep+1) % self.log_interval == 0:
                 self._real_log_health(timestep=timestep, reward=self.env.reward, cost=cost)

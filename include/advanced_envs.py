@@ -1,4 +1,4 @@
-from scipy.stats import Uniform, gaussian_kde
+from scipy.stats import Uniform, gaussian_kde, wasserstein_distance
 import matplotlib.pyplot as plt
 import matplotlib.patheffects as pe
 import numpy as np
@@ -255,7 +255,7 @@ class reward_calculator():
 
         return rewards, cost, performance, distances_theta, distances_beta
 
-    def theta_beta_linear(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 1, cost_as_optimizer = False, return_positive_cost = False, particle_loss_penalty = 10):
+    def theta_beta_linear(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, mode = 'mean', upper_val = 10, cost_as_optimizer = False, return_positive_cost = False, particle_loss_penalty = 1):
         if self.n_planes < 2:
             return 0,0
 
@@ -272,7 +272,7 @@ class reward_calculator():
             norm_distance_beta = cleaned_distance_beta
                 
             rewards = [
-                upper_val / norm_distance_theta[i] * norm_distance_beta[i]
+                upper_val / ( 1 + norm_distance_theta[i] * norm_distance_beta[i])
                 for i in range(norm_distance_theta.shape[0])
             ]
         else:
@@ -289,13 +289,51 @@ class reward_calculator():
 
         return rewards, cost, performance, norm_distance_theta, norm_distance_beta
 
+    def theta_beta_error(self, theta_meas, beta_meas, theta_true, beta_true, hit_valid, spatial_resolution, time_resolution,  mode = 'mean', upper_val = 10, cost_as_optimizer = False, return_positive_cost = False, particle_loss_penalty = 0):
+        if self.n_planes < 2:
+            return 0,0
+
+        cost = self.composite_cost()
+        error_theta = np.array(theta_meas - theta_true)
+        error_beta = np.array(beta_meas - beta_true)
+        n_lost_particles = self.n_tracks - hit_valid.all(axis=1).sum() 
+        cleaned_error_theta = np.delete(error_theta, ~hit_valid.all(axis = 1))
+        cleaned_error_beta = np.delete(error_beta, ~hit_valid.all(axis = 1))
+        excess_cost = self.budget - cost if (self.budget - cost > 0 and return_positive_cost) or self.budget - cost < 0 else 0
+
+        if(cleaned_error_theta.shape[0] != 0):
+            norm_theta_meas = np.delete(theta_meas, ~hit_valid.all(axis = 1)) / 20
+            norm_beta_meas = np.delete(beta_meas, ~hit_valid.all(axis = 1))
+            norm_theta_true = theta_true / 20
+            norm_beta_true = beta_true
+            geometric_efficiency_theta =  (spatial_resolution - error_theta) / spatial_resolution
+            geometric_efficiency_beta = (spatial_resolution - error_beta) / time_resolution
+            wasserstein_theta = wasserstein_distance(norm_theta_meas, norm_theta_true)
+            wasserstein_beta = wasserstein_distance(norm_beta_meas, norm_beta_true)
+
+            detector_precision = wasserstein_beta + wasserstein_theta
+                
+            rewards = upper_val - detector_precision
+        else:
+            rewards = [0]
+
+        if mode == 'mean':
+            performance = rewards
+            rewards = performance + (int(cost_as_optimizer) * self.gamma * excess_cost) - n_lost_particles * particle_loss_penalty
+        else:
+            performance = rewards
+            rewards = performance + (int(cost_as_optimizer) * self.gamma * excess_cost) - n_lost_particles * particle_loss_penalty
+
+        return rewards, cost, performance, norm_theta_meas, norm_beta_meas, {'theta_true_dist' : norm_theta_true, 'beta_true_dist': norm_beta_true, 'theta_geom_efficiency': geometric_efficiency_theta
+                                                                               ,'beta_geom_efficiency': geometric_efficiency_beta, 'detector_precision': detector_precision, 'wasserstein_theta': wasserstein_theta, 'wasserstein_beta':wasserstein_beta}
+
     def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid, mode='mean', upper_val=1, function = 'softplus', cost_as_optimzier = False):
         if function == 'softplus':
             return self.delta_softplus(delta_t_meas, delta_t_true, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimzier)
         else:
             return self.delta_arctan(delta_t_meas, delta_t_true, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimzier)
         
-    def calculate_reward_theta_beta(self, x_meas, y_meas, delta_t_meas, hit_valid, theta, beta, mode='mean', upper_val=10, function = 'softplus', cost_as_optimizer = False):
+    def calculate_reward_theta_beta(self, x_meas, y_meas, delta_t_meas, hit_valid, theta, beta, spatial_resolution = None, time_resolution = None, mode='mean', upper_val=10, function = 'softplus', cost_as_optimizer = False):
 
         if(len(self.detector_state) >=2):
             ev = eval_sim(x_meas, y_meas, self.detector_state, delta_t_meas, hit_valid, len(self.detector_state), self.tof_margin)
@@ -307,11 +345,13 @@ class reward_calculator():
             return self.theta_beta_arctan(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimizer)
         elif function == 'linear':
             return self.theta_beta_linear(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimizer)
+        elif function == 'error':
+            return self.theta_beta_error(ev['theta_measured'], ev['beta_measured'], theta, beta, hit_valid, spatial_resolution, time_resolution, mode=mode, upper_val=upper_val, cost_as_optimizer=cost_as_optimizer)
                 
 
     def composite_cost(self):
         resolution_cost = 1/self.spatial_res + 1/self.time_res**2
-        structural_cost = self.n_planes * 5 + self.detector_state.max()/10
+        structural_cost = self.n_planes * 3 + np.sqrt(self.detector_state.max())
         return resolution_cost + structural_cost
     
 MAX_PLANES = 10
@@ -365,9 +405,9 @@ class JointDetectorOptimizer(gym.Env):
         )
         ev = eval_sim(x, y, z, delta_t_meas, hit_valid, n_placed, self.tof_margin)
 
-        stats[0] = np.array(ev['theta_measured']).mean()
-        stats[1] = np.array(ev['beta_measured']).mean()
-        stats[2] = delta_t_meas.mean()
+        stats[0] = np.array(abs(ev['theta_measured'] - theta)).mean()
+        stats[1] = np.array(abs(ev['beta_measured'] - beta)).mean()
+        stats[2] = np.array(abs(delta_t_meas - delta_t_true)).mean()
 
         obs = np.concatenate([padded, stats, config]).astype(np.float32)
         return obs, theta, theta_deg, beta, delta_t_meas, delta_t_true, x, y, hit_valid
@@ -396,7 +436,7 @@ class JointDetectorOptimizer(gym.Env):
         self.reward = 0.0
         self.cost = 0.0
         self.performance = 0.0
-        self.distances_theta = np.array([])
+        self.distances_theta = np.array([]) #In realtà in alcuni casi questi sono errori e non distanze
         self.distances_beta = np.array([])
 
         plane_position = self._free_position(plane_position)
@@ -410,8 +450,8 @@ class JointDetectorOptimizer(gym.Env):
         if not self.reward_on_termination or terminated:
             self.reward_calculator._set_detector_state_resolution(
                 self.n_planes, self.spatial_res, self.time_res, self.tof_margin, self.detector_state)
-            self.reward, self.cost, self.performance, self.distances_theta, self.distances_beta = self.reward_calculator.calculate_reward_theta_beta(
-                x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
+            self.reward, self.cost, self.performance, self.distances_theta, self.distances_beta, self.metrics = self.reward_calculator.calculate_reward_theta_beta(
+                x_hits, y_hits, delta_t_meas, hit_valid, theta_deg, beta, self.spatial_res, self.time_res, mode=self.reward_mode, upper_val=self.reward_upper_val, function = self.reward_function, cost_as_optimizer=self.cost_as_optimizer)
 
             #self.reward, self.cost, self.distance = self.reward_calculator.calculate_reward_delta(
             #    delta_t_meas, delta_t_true, hit_valid, mode=self.reward_mode, upper_val = self.reward_upper_val, function = self.reward_function, cost_as_optimzier=self.cost_as_optimizer)
