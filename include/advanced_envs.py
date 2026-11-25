@@ -6,6 +6,7 @@ import gymnasium as gym
 from include.misc import simulate_tracks, eval_sim, draw_detector, calculate_angles_theta
 from gymnasium import spaces
 import numpy as np
+from permetrics.regression import RegressionMetric
 
 
 
@@ -156,7 +157,7 @@ class banditOptimizer():
 
 
 class reward_calculator():
-    def __init__(self, n_planes, spatial_res, time_res, tof_margin, n_tracks, detector_state, budget=100):
+    def __init__(self, n_planes, spatial_res, time_res, tof_margin, n_tracks, detector_state, budget=100, gamma=0.3):
         self.n_planes = n_planes
         self.spatial_res = spatial_res
         self.time_res = time_res
@@ -164,7 +165,7 @@ class reward_calculator():
         self.n_tracks = n_tracks
         self.detector_state = detector_state
         self.budget = budget
-        self.gamma = 1
+        self.gamma = gamma
 
     def _set_detector_state_resolution(self, n_planes, spatial_res, time_res, tof_margin, detector_state):
         self.n_planes = n_planes
@@ -294,34 +295,37 @@ class reward_calculator():
             return 0,0
 
         cost = self.composite_cost()
-        error_theta = np.array(theta_meas - theta_true)
-        error_beta = np.array(beta_meas - beta_true)
+        
         n_lost_particles = self.n_tracks - hit_valid.all(axis=1).sum() 
-        cleaned_error_theta = np.delete(error_theta, ~hit_valid.all(axis = 1))
-        cleaned_error_beta = np.delete(error_beta, ~hit_valid.all(axis = 1))
-        excess_cost = self.budget - cost if (self.budget - cost > 0 and return_positive_cost) or self.budget - cost < 0 else 0
+        cleaned_theta = np.delete(theta_meas, ~hit_valid.all(axis = 1))
+        cleaned_beta = np.delete(beta_meas, ~hit_valid.all(axis=1))
+        cleaned_theta_true = np.delete(theta_true, ~hit_valid.all(axis=1))
+        cleaned_beta_true = np.delete(beta_true, ~hit_valid.all(axis=1))
+        eval_theta = RegressionMetric(cleaned_theta, cleaned_theta_true)
+        eval_beta = RegressionMetric(cleaned_beta, cleaned_beta_true)
+        excess_cost = (self.budget - cost) if ((self.budget - cost) > 0 and return_positive_cost == True) or (self.budget - cost) < 0 else 0
 
-        if(cleaned_error_theta.shape[0] != 0):
-            norm_theta_meas = np.delete(theta_meas, ~hit_valid.all(axis = 1)) / 20
-            norm_beta_meas = np.delete(beta_meas, ~hit_valid.all(axis = 1))
-            norm_theta_true = theta_true / 20
-            norm_beta_true = beta_true
-            geometric_efficiency_theta =  (spatial_resolution - error_theta) / spatial_resolution
-            geometric_efficiency_beta = (spatial_resolution - error_beta) / time_resolution
+        if(cleaned_theta.shape[0] != 0):
+            norm_theta_meas = cleaned_theta / 20
+            norm_beta_meas = cleaned_beta 
+            norm_theta_true = cleaned_theta_true / 20
+            norm_beta_true = cleaned_beta_true
+            #geometric_efficiency_theta =  (1 - eval_theta.MRE()) / (1 - spatial_resolution)
+            #geometric_efficiency_beta =  (1 - eval_beta.MRE()) / (1 - time_resolution)
+            geometric_efficiency_theta = eval_theta.MRE()
+            geometric_efficiency_beta = eval_beta.MRE()
             wasserstein_theta = wasserstein_distance(norm_theta_meas, norm_theta_true)
             wasserstein_beta = wasserstein_distance(norm_beta_meas, norm_beta_true)
 
-            detector_precision = wasserstein_beta + wasserstein_theta
+            detector_precision = (wasserstein_beta*10) + (wasserstein_theta*10)
                 
-            rewards = upper_val - detector_precision
+            performance = upper_val - detector_precision 
         else:
-            rewards = [0]
+            performance = [0]
 
         if mode == 'mean':
-            performance = rewards
             rewards = performance + (int(cost_as_optimizer) * self.gamma * excess_cost) - n_lost_particles * particle_loss_penalty
         else:
-            performance = rewards
             rewards = performance + (int(cost_as_optimizer) * self.gamma * excess_cost) - n_lost_particles * particle_loss_penalty
 
         return rewards, cost, performance, norm_theta_meas, norm_beta_meas, {'theta_true_dist' : norm_theta_true, 'beta_true_dist': norm_beta_true, 'theta_geom_efficiency': geometric_efficiency_theta
@@ -350,15 +354,15 @@ class reward_calculator():
                 
 
     def composite_cost(self):
-        resolution_cost = 1/self.spatial_res + 1/self.time_res**2
-        structural_cost = self.n_planes * 3 + np.sqrt(self.detector_state.max())
+        resolution_cost = 1/self.spatial_res + 1/self.time_res-0.1**2
+        structural_cost = self.n_planes * 5 + np.sqrt(self.detector_state.max())
         return resolution_cost + structural_cost
     
 MAX_PLANES = 10
 class JointDetectorOptimizer(gym.Env):
     def __init__(self, n_tracks=200, spatial_res=0.1, time_res=0.3, tof_margin=50.0, n_planes = 5,
                 reward_on_termination=False, bandit_window_size = 1000, eps = 0.1, debug = False, reward_function = 'softplus',
-                reward_mode = 'mean', reward_upper_val = 10, cost_as_optimizer=False, gamma=1):
+                reward_mode = 'mean', reward_upper_val = 10, cost_as_optimizer=False, gamma=0.3):
         self.bandit = banditOptimizer(bandit_window_size, eps)
         self.debug = debug 
         self.n_tracks = n_tracks
@@ -368,14 +372,13 @@ class JointDetectorOptimizer(gym.Env):
         self.n_planes = n_planes
         self.max_planes = MAX_PLANES
         self.reward_on_termination = reward_on_termination
-        self.reward_calculator = reward_calculator(n_planes, spatial_res, time_res, tof_margin, n_tracks, np.array([], dtype=np.float32))
-        self.min_sep = 1.0
+        self.reward_calculator = reward_calculator(n_planes, spatial_res, time_res, tof_margin, n_tracks, np.array([], dtype=np.float32), budget=100, gamma=gamma)
+        self.min_sep = 10.0 #Modificare con una scelta random
         self.reward_mode = reward_mode
         self.reward_function = reward_function
         self.cost_as_optimizer = False
         self.reward_upper_val = reward_upper_val
         self.cost_as_optimizer = cost_as_optimizer
-        reward_calculator.gamma = gamma
 
         self.action_space = spaces.Box(low=-1.0, high=1.0, shape=(1,), dtype=np.float32)
         obs_dim = self.max_planes + 7
