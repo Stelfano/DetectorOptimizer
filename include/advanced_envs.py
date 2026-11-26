@@ -312,14 +312,14 @@ class reward_calculator():
             norm_beta_true = cleaned_beta_true
             #geometric_efficiency_theta =  (1 - eval_theta.MRE()) / (1 - spatial_resolution)
             #geometric_efficiency_beta =  (1 - eval_beta.MRE()) / (1 - time_resolution)
-            geometric_efficiency_theta = eval_theta.MRE()
-            geometric_efficiency_beta = eval_beta.MRE()
+            geometric_efficiency_theta = (1 - eval_theta.MRE()) / (1 + spatial_resolution)
+            geometric_efficiency_beta = (1 - eval_beta.MRE()) / (1 + time_resolution)
             wasserstein_theta = wasserstein_distance(norm_theta_meas, norm_theta_true)
             wasserstein_beta = wasserstein_distance(norm_beta_meas, norm_beta_true)
 
-            detector_precision = (wasserstein_beta*10) + (wasserstein_theta*10)
+            detector_divergence = (wasserstein_beta*10) + (wasserstein_theta*10)
                 
-            performance = upper_val - detector_precision 
+            performance = upper_val - detector_divergence + geometric_efficiency_theta + geometric_efficiency_beta
         else:
             performance = [0]
 
@@ -329,7 +329,7 @@ class reward_calculator():
             rewards = performance + (int(cost_as_optimizer) * self.gamma * excess_cost) - n_lost_particles * particle_loss_penalty
 
         return rewards, cost, performance, norm_theta_meas, norm_beta_meas, {'theta_true_dist' : norm_theta_true, 'beta_true_dist': norm_beta_true, 'theta_geom_efficiency': geometric_efficiency_theta
-                                                                               ,'beta_geom_efficiency': geometric_efficiency_beta, 'detector_precision': detector_precision, 'wasserstein_theta': wasserstein_theta, 'wasserstein_beta':wasserstein_beta}
+                                                                               ,'beta_geom_efficiency': geometric_efficiency_beta, 'detector_divergence': detector_divergence, 'wasserstein_theta': wasserstein_theta, 'wasserstein_beta':wasserstein_beta}
 
     def calculate_reward_delta(self, delta_t_meas, delta_t_true, hit_valid, mode='mean', upper_val=1, function = 'softplus', cost_as_optimzier = False):
         if function == 'softplus':
